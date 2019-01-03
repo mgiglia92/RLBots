@@ -36,7 +36,7 @@ class CoordinateSystems:
         self.heading = None
 
     def update(self, car, ball):
-        #rotation matricies for roll pitch and yaw
+        #Rcar_to_world
         r = -1*car.roll #rotation around roll axis to get car to world frame
         p = -1*car.pitch #rotation around pitch axis to get car to world frame
         y = car.yaw #rotation about the world z axis to get the car to the world frame
@@ -47,6 +47,7 @@ class CoordinateSystems:
         self.Rinter = np.matmul(self.Rz, self.Ry)
         self.Rcar_to_world = np.matmul(self.Rinter, self.Rx)
 
+        #Rworld_to_car
         r = car.roll #rotation around roll axis to get world to car frame
         p = car.pitch #rotation around pitch axis to get world to car frame
         y = -1*car.yaw #rotation about the world z axis to get world to car frame
@@ -57,10 +58,22 @@ class CoordinateSystems:
         self.Rinter = np.matmul(self.Rx, self.Ry)
         self.Rworld_to_car = np.matmul(self.Rinter, self.Rz)
 
+        #Rworld_to_ball
+        ux = np.array([1.,0.,0.])
+        uy = np.array([0.,1.,0.])
+        uz = np.array([0.,0.,1.])
+        Pb = np.array([ball.x, ball.y, ball.z])
+        Pc = np.array([car.x, car.y, car.z]) #negate z because z axis for car is pointed downwards
+        Pbc = np.subtract(Pb, Pc) #Get vector to ball from car in car coordinates
+
+        xyz = np.cross(ux, Pbc) #xyz of quaternion is rotation between Pbc and unit x vector
+        w = math.sqrt(1 * ((Pbc.item(0) ** 2) + (Pbc.item(1) ** 2) + (Pbc.item(2) ** 2))) + np.dot(ux, Pbc) #scalr of quaternion
+        qbcworld = Quaternion(w = w, x = xyz.item(0), y = xyz.item(1), z = xyz.item(2))
+
         #Quaternions for rotations between frames
         self.Qcar_to_world = Quaternion(matrix = self.Rcar_to_world).normalised.normalised
         self.Qworld_to_car = Quaternion(matrix = self.Rworld_to_car).normalised.normalised
-        self.Qworld_to_ball = Quaternion(matrix = self.Rworld_to_car).normalised.normalised
+        self.Qworld_to_ball = Quaternion(matrix = qbcworld.rotation_matrix).normalised.normalised
 
         #Random rotation to try to point to
         r = 1
@@ -120,7 +133,7 @@ class CoordinateSystems:
         self.wy_car = self.toCarCoordinates(wy_world)
         self.wz_car = self.toCarCoordinates(wz_world)
         self.w_car = self.wx_car + self.wy_car + self.wz_car
-        
+
         print('wx_car:', self.wx_car, 'wy_car', self.wy_car, 'wz_car', self.wz_car)
     def getDesiredQuaternion(self, vector):#vector is the 3d point vector to where we want the car to face in world coordinates / attitude is the current attitude of the car [roll, pitch, yaw]
         #Get quaternion that rotates world coordinates to car Coordinates

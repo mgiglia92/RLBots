@@ -61,6 +61,7 @@ class Test1(BaseAgent):
         self.car.update(packet.game_cars[self.index])
         self.ball.update(packet.game_ball)
         self.CoordinateSystems.update(self.car, self.ball)
+        self.BallController.update(packet.game_ball)
 
         self.ball.x = packet.game_ball.physics.location.x
         self.ball.y = packet.game_ball.physics.location.y
@@ -147,17 +148,11 @@ class Test1(BaseAgent):
         wCar = math.sqrt(1 * ((Pcar.item(0) ** 2) + (Pcar.item(1) ** 2) + (Pcar.item(2) ** 2))) + np.dot(ux, Pcar) #scalr of quaternion
         qcarworld = Quaternion(w = wCar, x = xyzCar.item(0), y = xyzCar.item(1), z = xyzCar.item(2))
 
+        #Angular Velocity Inputs to the control algorithm
         omegades = np.matrix([0,0,0])
         omegacur = self.CoordinateSystems.w_car
-        # print('qcarworld', qcarworld)
-        qnull = Quaternion(w = 1, x = 0, y = 0, z = 0)
-        qc2b = qbcworld.unit*qcarworld.unit.conjugate
-
-
 
         torques = getTorques(self.CoordinateSystems.Qworld_to_car, qbcworld.conjugate, omegades, omegacur)
-        # print('xyz:', eulerAngles, 'qbcworld:', qbcworld, ' Points:', Pbc)
-        # print( 'qbccar: ', qbccar, 'ea:', eulerAngles)
 
         #Send Data to feedbackcontroller
         #self.car.printVals();
@@ -176,19 +171,13 @@ class Test1(BaseAgent):
 
 
         #Setting Controller state from values in controller
-        #self.fbController.gainFlightControl(1000, 0, self.car.z, self.car.vz)
-        #self.controller_state.boost = self.boostCounter.boost(59)
-        # print(self.fbController.boostPercent)
-
+        #boost value
         # self.controller_state.boost = 1 #self.boostCounter.boost(self.fbController.boostPercent)
         # self.controller_state.boost = self.boostCounter.boost(self.fbController.boostPercent)
-
         self.controller_state.boost = 1 #self.boostCounter.boost(boostPercent)
 
-        # print(self.fbController.boostPercent)
-        # self.controller_state.boost = 0
-
-        self.controller_state.pitch = max(min(torques.item(1), 1), -1) #self.fbController.pitchPercent
+        #roll, pitch, yaw values
+        self.controller_state.pitch = max(min(torques.item(1), 1), -1)
         self.controller_state.roll = max(min(torques.item(0), 1), -1)
         self.controller_state.yaw =  -1*max(min(torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
 
@@ -196,42 +185,29 @@ class Test1(BaseAgent):
         # self.controller_state.roll = 0.0#max(min(torques.item(0), 1), -1)
         # self.controller_state.yaw = 1#max(min(torques.item(2), 1), -1)
 
-        # print('x: ', "{:.3f}".format(self.car.x), ' z:', "{:.3f}".format(self.car.z), 'ballx: ', packet.game_ball.physics.location.x, 'ballz:', packet.game_ball.physics.location.z, ' currentangle: ', curang, 'c to b angle: ', carBallAngle)
+        #Contol ball for testing functions
+        x, y, z, vi = self.BallController.bounce(500,500,1000,1000)
+        # Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/2)
+        # vx = self.BallController.oscillateX(-1500, 0, 1000)
+        # vx = Vt.item(0)
+        # vy = Vt.item(1)
+        # vz = 0
 
-        #reset ball position so otehr ai does not score
-
-
-        #fix cars coordinates for testing
-        # car_state = CarState(jumped=False, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3 (x=800, y=500, z=500), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(math.pi/2, 0, 0), angular_velocity=Vector3(0, 0, 0)))
-
-        #Carstate for fixed position
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-        #                  physics=Physics(location = Vector3 (x=-1000, y=0, z=250), velocity=Vector3(x=0, y=0, z=0))) #, rotation = Rotator(math.pi/4,0,0)
-
-        #get angular velocity to control ball
-        self.BallController.update(packet.game_ball)
-        Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/2)
-        vx = self.BallController.oscillateX(-1500, 0, 1000)
-        vx = Vt.item(0)
-        vy = Vt.item(1)
-        vz = 0
-        # print('vx', vx)
-        #carstate to remove gravity
-        ball_state = BallState(Physics(location=Vector3(00, 500, 800), velocity = Vector3(0, 0, 0)))
-        # ball_state = BallState(Physics(velocity = Vector3(vx, vy, 25)))
+        #Set ball and car states to set game state for testing
+        ball_state = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
+        # ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
         # ,
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
-        car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
-                         physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, z=0)))#, rotation = Rotator(pitch = 0, yaw = 0, roll = 0)))
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(0, 0, 1000),velocity=Vector3(0, 0, 0), rotation = Rotator(yaw = 0, pitch = math.pi/4, roll = math.pi/4)))
+        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, z=0)))#, rotation = Rotator(pitch = 0, yaw = 0, roll = 0)))
+        car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
+                         physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
 
 
-        game_state = GameState(ball = ball_state, cars = {self.index: car_state})
-        self.set_game_state(game_state) #set game state
-        #Print info for learning/testing
+        if(self.BallController.release == 0):
+            game_state = GameState(ball = ball_state, cars = {self.index: car_state})
+            self.set_game_state(game_state)
 
         #RENDERING
         self.renderer.begin_rendering()
@@ -258,10 +234,8 @@ class Test1(BaseAgent):
         self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingy.item(0), headingy.item(1), headingy.item(2)]), self.renderer.green())
         self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingz.item(0), headingz.item(1), headingz.item(2)]), self.renderer.blue())
 
-        #draw quaternion axis to ball from car coordinate
-
+        #Draw position of ball after converting from Pball_car to Pball_world
         desired = np.array(self.CoordinateSystems.getVectorToBall_world()).flatten()
-        # print('desired', desired)
         self.renderer.draw_line_3d(car, car + desired, self.renderer.yellow())
 
         #Car to ball vector
@@ -293,7 +267,7 @@ class Test1(BaseAgent):
         car_state = CarState(jumped=False, double_jumped=False, boost_amount=100,
                          physics=Physics(location = Vector3 (x=-1800, y=0, z=550), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(math.pi / 2, 0, 0), angular_velocity=Vector3(0, 0, 0)))
 
-        ball_state = BallState(Physics(location=Vector3(-1000, 0, 800), velocity=Vector3(x=0, y=0, z=0)))
+        ball_state = BallState(Physics(location=Vector3(1000, 0, 800), velocity=Vector3(x=0, y=0, z=0)))
         game_state = GameState(ball=ball_state, cars={self.index: car_state})
         self.set_game_state(game_state)
 
