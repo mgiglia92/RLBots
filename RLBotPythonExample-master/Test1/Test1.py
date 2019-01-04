@@ -152,7 +152,21 @@ class Test1(BaseAgent):
         omegades = np.matrix([0,0,0])
         omegacur = self.CoordinateSystems.w_car
 
-        torques = getTorques(self.CoordinateSystems.Qworld_to_car, qbcworld.conjugate, omegades, omegacur)
+
+        #CONTROL SYSTEM ALGORITHMS
+        #get acceleration vector
+        Pdes = np.array([00,00,500])
+        # Pdes = np.array([packet.game_ball.physics.location.x, packet.game_ball.physics.location.y, packet.game_ball.physics.location.z])
+        Pcur = np.array([self.car.x, self.car.y, self.car.z])
+        Vdes = np.array([0,0,0])
+        Vcur = np.array([self.car.vx, self.car.vy, self.car.vz])
+        acc, accMagnitude = getAccelerationVector(Pdes, Pcur, Vdes, Vcur)
+        accfix = np.array([-1*acc.item(0), acc.item(1), acc.item(2)])
+        boostPercent = accMagnitude / 991.666 * 100
+        boostPercent = max(min(boostPercent, 100), 0)
+        print('acc:', acc, 'accmag', accMagnitude)
+        Qworld_to_acceleration_vector = self.CoordinateSystems.createQuaternion_world_at_car(accfix)
+        torques = getTorques(self.CoordinateSystems.Qworld_to_car, Qworld_to_acceleration_vector, omegades, omegacur)
 
         #Send Data to feedbackcontroller
         #self.car.printVals();
@@ -174,7 +188,7 @@ class Test1(BaseAgent):
         #boost value
         # self.controller_state.boost = 1 #self.boostCounter.boost(self.fbController.boostPercent)
         # self.controller_state.boost = self.boostCounter.boost(self.fbController.boostPercent)
-        self.controller_state.boost = 1 #self.boostCounter.boost(boostPercent)
+        self.controller_state.boost = self.boostCounter.boost(boostPercent)
 
         #roll, pitch, yaw values
         self.controller_state.pitch = max(min(torques.item(1), 1), -1)
@@ -202,7 +216,7 @@ class Test1(BaseAgent):
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, z=0)))#, rotation = Rotator(pitch = 0, yaw = 0, roll = 0)))
         car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
+                         physics=Physics(location = Vector3(0, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
 
 
         if(self.BallController.release == 0):
@@ -243,6 +257,8 @@ class Test1(BaseAgent):
         self.renderer.draw_rect_3d(car+desired, 100, 100, 0, self.renderer.teal())
         self.renderer.end_rendering()
 
+        #Acceleration vector
+        self.renderer.draw_line_3d(car, car + np.linalg.norm(acc), self.renderer.pink())
         #printing
         # print('wx:', self.car.wx, 'wy:', self.car.wy, 'wz:', self.car.wz)
         return self.controller_state
@@ -959,3 +975,20 @@ def getTorques(Qw2c, Qw2b, wdes, wcur):
     # print('theta', theta, 'torques', torques, 'qerr', Qerr.unit, 'qw2c', Qw2c.unit, 'qc2b', Qw2b.unit)
 
     return torques
+
+def getAccelerationVector(Pdesired, Pcurrent, Vdesired, Vcurrent):
+    #gains for state feedback control
+    kp = np.array([2, 2, 1])
+    kv = np.array([1, 1, 1])
+    #gravity vector
+    gravity = np.array([0,0,-650])
+
+    #error vectors
+    Perr = Pdesired - Pcurrent
+    Verr = Vdesired - Vcurrent
+
+    acc = -1*np.multiply(kp, Perr) - (np.multiply(kv, Verr))
+    acc_gravityfix = acc + gravity
+    accMagnitude = np.linalg.norm(acc_gravityfix)
+
+    return acc_gravityfix, accMagnitude

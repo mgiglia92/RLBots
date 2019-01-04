@@ -134,7 +134,7 @@ class CoordinateSystems:
         self.wz_car = self.toCarCoordinates(wz_world)
         self.w_car = self.wx_car + self.wy_car + self.wz_car
 
-        print('wx_car:', self.wx_car, 'wy_car', self.wy_car, 'wz_car', self.wz_car)
+        # print('wx_car:', self.wx_car, 'wy_car', self.wy_car, 'wz_car', self.wz_car)
     def getDesiredQuaternion(self, vector):#vector is the 3d point vector to where we want the car to face in world coordinates / attitude is the current attitude of the car [roll, pitch, yaw]
         #Get quaternion that rotates world coordinates to car Coordinates
         xyz = np.cross(self.ux_world, vector/np.linalg.norm(vector, axis=0)) #xyz of quaternion is rotation between the UNIT Pbc vector and normalised x vector
@@ -157,3 +157,20 @@ class CoordinateSystems:
         #get world to car quaternion
         vec = self.Qworld_to_car.rotate(vector)
         return vec
+
+    def createQuaternion_world_at_car(self, point):
+        #convert point into quaternion
+        #Rworld_to_ball
+        ux = np.array([1.,0.,0.])
+        uy = np.array([0.,1.,0.])
+        uz = np.array([0.,0.,1.])
+        Ppoint = np.array([point.item(0), point.item(1), point.item(2)])
+        #Pcar = np.array([car.item(0), car.item(1), car.item(2)]) #negate z because z axis for car is pointed downwards
+        P = Ppoint #np.subtract(Ppoint, Pcar) #Get vector to ball from car in car coordinates
+
+        xyz = np.cross(ux, P) #xyz of quaternion is rotation between Pbc and unit x vector
+        w = math.sqrt(1 * ((P.item(0) ** 2) + (P.item(1) ** 2) + (P.item(2) ** 2))) + np.dot(ux, P) #scalr of quaternion
+        Qworld_to_point = Quaternion(w = w, x = xyz.item(0), y = xyz.item(1), z = xyz.item(2)).normalised
+
+        #return quaternion
+        return Qworld_to_point
