@@ -973,7 +973,6 @@ def getTorques(Qw2c, Qw2b, wdes, wcur):
     # q = np.matrix(qerrnew)
     torques = -1*(kq * q) - (kw * werr)
     # print('theta', theta, 'torques', torques, 'qerr', Qerr.unit, 'qw2c', Qw2c.unit, 'qc2b', Qw2b.unit)
-
     return torques
 
 def getAccelerationVector(Pdesired, Pcurrent, Vdesired, Vcurrent):
