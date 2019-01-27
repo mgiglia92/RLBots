@@ -36,12 +36,20 @@ class Trajectory:
         self.position = None
         self.trajectoryType = None
 
-    def circularTrajectory(self, radius, height, speed):
-        t = speed * self.counter / 360#convert to degrees
+    def circularTrajectory(self, radius, omega, time, height):
+        w = omega #angular velocity of trajectory
+        A = radius
+        t = time
+        #positions
         z = height
-        x = radius*math.cos(t)
-        y = radius*math.sin(t)
-        return np.array([x,y,z])
+        x = A*math.cos(w*t)
+        y = A*math.sin(w*t)
+        #velocities
+        vx = -1*A*w*math.sin(w*t)
+        vy = A*w*math.cos(w*t)
+        vz = 0
+        return np.array([x,y,z]), np.array([vx,vy,vz])
+
     def startTrajectory(self, type):
         self.counter = 0
         if(type == 'circular'):
