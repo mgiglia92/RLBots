@@ -25,6 +25,7 @@ class BallController:
         self.velocity = None
         self.counter1 = 0
         self.release = 0
+        self.releaseCounter = 50
     def update(self, data):
         self.location = data.physics.location
         self.x = data.physics.location.x
@@ -58,7 +59,7 @@ class BallController:
 
     def bounce(self, x, y, z, vi):
         self.counter1 = self.counter1 + 1
-        if(self.counter1> 50):
+        if(self.counter1> self.releaseCounter):
             self.release = 1
             return x, y, z, vi
         else:
@@ -66,7 +67,7 @@ class BallController:
 
     def projectileMotion(self, position, velocity):
         self.counter1 = self.counter1 + 1
-        if(self.counter1 > 50):
+        if(self.counter1 > self.releaseCounter):
             self.release = 1
             return position, velocity
         else:
