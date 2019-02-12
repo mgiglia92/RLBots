@@ -63,14 +63,14 @@ class CoordinateSystems:
         uy = np.array([0.,1.,0.])
         uz = np.array([0.,0.,1.])
         Pb = np.array([ball.x, ball.y, ball.z])
-        Pc = np.array([car.x, car.y, car.z]) #negate z because z axis for car is pointed downwards
+        Pc = np.array([car.x, car.y, car.z])
         Pbc = np.subtract(Pb, Pc) #Get vector to ball from car in car coordinates
 
         xyz = np.cross(ux, Pbc) #xyz of quaternion is rotation between Pbc and unit x vector
         w = math.sqrt(1 * ((Pbc.item(0) ** 2) + (Pbc.item(1) ** 2) + (Pbc.item(2) ** 2))) + np.dot(ux, Pbc) #scalr of quaternion
         qbcworld = Quaternion(w = w, x = xyz.item(0), y = xyz.item(1), z = xyz.item(2))
 
-        #Quaternions for rotations between frames
+        #Quaternions for rotations between frames ALL COORDINATE SYSTEMS ORIGINS ARE AT THE CARS MASS CENTER
         self.Qcar_to_world = Quaternion(matrix = self.Rcar_to_world).normalised.normalised
         self.Qworld_to_car = Quaternion(matrix = self.Rworld_to_car).normalised.normalised
         self.Qworld_to_ball = Quaternion(matrix = qbcworld.rotation_matrix).normalised.normalised
@@ -175,3 +175,35 @@ class CoordinateSystems:
 
         #return quaternion
         return Qworld_to_point
+    def createQuaternion_world_at_car2(self, point, car):
+        #convert point into quaternion
+        #point MUST be in world axes with origin at the car
+        #Rworld_to_ball
+        ux = np.array([1.,0.,0.])
+        uy = np.array([0.,1.,0.])
+        uz = np.array([0.,0.,1.])
+        Ppoint = np.array([point.item(0), -1*point.item(1), -1*point.item(2)])
+        #Pcar = np.array([car.item(0), car.item(1), car.item(2)]) #negate z because z axis for car is pointed downwards
+        P = Ppoint #np.subtract(Ppoint, Pcar) #Get vector to ball from car in car coordinates
+
+        xyz = np.cross(ux, P) #xyz of quaternion is rotation between Pbc and unit x vector
+        w = math.sqrt(1 * ((P.item(0) ** 2) + (P.item(1) ** 2) + (P.item(2) ** 2))) + np.dot(ux, P) #scalr of quaternion
+        Qworld_to_point = Quaternion(w = w, x = xyz.item(0), y = xyz.item(1), z = xyz.item(2)).normalised
+
+        #return quaternion
+        return Qworld_to_point
+    def createQuaternion_from_point_and_roll(self, point, roll):
+        r = roll
+        p = -1 * math.atan2(point[2], math.sqrt((point[0]*point[0]) + (point[1] * point[1])))
+        y = -1 * math.atan2(point[0], point[1]) + math.pi/2
+
+        Rx = np.matrix([[1, 0, 0], [0, math.cos(r), -1*math.sin(r)], [0, math.sin(r), math.cos(r)]])
+        Ry = np.matrix([[math.cos(p), 0, math.sin(p)], [0, 1, 0], [-1*math.sin(p), 0, math.cos(p)]])
+        Rz = np.matrix([[math.cos(y), -1*math.sin(y), 0], [math.sin(y), math.cos(y), 0], [0, 0, 1]])
+        #Order of rotations from car to world is z then y then x
+        Rinter = np.matmul(Rz, Ry)
+        R = np.matmul(Rinter, Rx)
+
+        Qto_point = Quaternion(matrix = R).normalised.conjugate.normalised
+        # print(r, p, y)
+        return Qto_point

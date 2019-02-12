@@ -59,6 +59,9 @@ class Test2(BaseAgent):
         self.data = Plotting.data()
         self.TPN = TPN()
 
+        self.err_previous_PID = 0
+        self.integration_previous_PID = 0
+
         self.t0 = 0 #Time at initial time step
         self.t1 = 0 #Time at time step tk+1
         self.p0 = np.array([0,0,0]) #position vector at initial time
@@ -92,99 +95,9 @@ class Test2(BaseAgent):
         self.ball.update(packet.game_ball)
         self.CoordinateSystems.update(self.car, self.ball)
         self.BallController.update(packet.game_ball)
-        self.TPN.update(self.car, self.ball)
-
-        self.ball.x = packet.game_ball.physics.location.x
-        self.ball.y = packet.game_ball.physics.location.y
-        self.ball.z = packet.game_ball.physics.location.z
-
-        # t = packet.game_info.seconds_elapsed
-        #print(packet.game_cars[self.index])
-
-
-        carBallAngle = getAngle(packet.game_ball.physics.location.x - self.car.x, packet.game_ball.physics.location.z - self.car.z, 0, 0)
-
-
-        # print('z:', self.car.z, 'vz:', self.car.vz, 'y:', self.car.y, 'vy:', self.car.vy, 'x:', self.car.x, 'vx:', self.car.vx, 'pitch:', self.car.pitch, 'roll: ', self.car.roll, 'yaw:', self.car.yaw)
-
-        #fixing pitch since RL uses euler angles
-        pi = math.pi
-        p = float(self.car.pitch)
-        r = float(self.car.roll)
-        y = float(self.car.yaw)
-
-        curang = float(getXZangle(p, r, y))
-        # print('actual pitchL', actualPitch[0])
-        #Create desired and current vectors [x, z, theta, vx, vz, omegay]
-        # self.current = np.matrix([self.car.z, self.car.x, actualPitch, self.car.vz, self.car.vx, self.car.wy])
-        # self.desired = np.matrix([800, self.car.x, math.pi/4, self.car.vz, self.car.vx, self.car.wy])
-        self.current = np.matrix([curang, self.car.wy])
-        self.desired1 = np.matrix([-1*float(carBallAngle[0]),0])
-        self.desired2 = self.desired1 #np.matrix([-2, 0])
-
-
-        #calculate Adesired
-        As = 900 #uu/s2
-        Ag = np.matrix([0,-650 ])
-        theta = carBallAngle
-        Adesired = np.matrix([(As*math.cos(theta)), (As * math.sin(theta))])
-        Aa = Adesired - Ag
-
-        Ax = float(Aa.item(0))
-        Az = float(Aa.item(1))
-        Ax2 = math.pow(Ax, 2)
-        Az2 = math.pow(Az, 2)
-
-        A = (math.sqrt(Ax2 + Az2))
-        boostPercent = A / 991.666 * 100
-        boostPercent = max(min(boostPercent, 100), 0)
-
-        thetaActual = getAngle(Aa.item(0), Aa.item(1), 0, 0)
-        # print('Theta actual:', thetaActual, 'Aactual: ', Aa, 'boost percent: ', boostPercent)
-        thetaDesired = np.matrix([-1*float(thetaActual), 0])
-
-
-        #Quaternion stuff
-        q0 = Quaternion(axis = [1.,0.,0.], radians = self.car.roll)
-        q1 = Quaternion(axis = [0.,1.,0.], radians = self.car.pitch)
-        q2 = Quaternion(axis = [0.,0.,1.], radians = -1*self.car.yaw)
-        q3 = q0*q1*q2
-        xprime = q3.rotate([1,0,0])
-
-        qcar = q3.rotate([1.,0.,0.])
-
-        # print('xprime: ', xprime, 'q3:', q3)
-
-        #get point vectors for car and ball
-        ux = np.array([1.,0.,0.])
-        uy = np.array([0.,1.,0.])
-        uz = np.array([0.,0.,1.])
-        Pb = np.array([packet.game_ball.physics.location.x, packet.game_ball.physics.location.y, packet.game_ball.physics.location.z])
-        Pc = np.array([self.car.x, self.car.y, self.car.z]) #negate z because z axis for car is pointed downwards
-        Pbc = np.subtract(Pb, Pc) #Get vector to ball from car in car coordinates
-
-        xyz = np.cross(ux, Pbc) #xyz of quaternion is rotation between Pbc and unit x vector
-        w = math.sqrt(1 * ((Pbc.item(0) ** 2) + (Pbc.item(1) ** 2) + (Pbc.item(2) ** 2))) + np.dot(ux, Pbc) #scalr of quaternion
-        qbcworld = Quaternion(w = w, x = xyz.item(0), y = xyz.item(1), z = xyz.item(2))
-        eulerAngles = toEulerAngle(qbcworld.unit) #convert quaternion to euler angles
-
-
-        #getting quaternion describing car orientation
-        qw2c = Quaternion(w=0, x = self.car.roll, y = self.car.pitch, z = self.car.yaw)
-        # Pcar = qw2c.unit.rotate(ux)
-        q0 = Quaternion(axis = [1.,0.,0.], radians = self.car.roll)
-        q1 = Quaternion(axis = [0.,1.,0.], radians = self.car.pitch)
-        q2 = Quaternion(axis = [0.,0.,-1.], radians = self.car.yaw)
-        q3 = q0.unit*q1.unit*q2.unit
-        Pcar = q3.unit.rotate(ux)
-        # print('pcar', xprime, 'pitch', self.car.pitch)
-        xyzCar = np.cross(ux, Pcar) #xyz of quaternion is rotation between Pbc and unit x vector
-        wCar = math.sqrt(1 * ((Pcar.item(0) ** 2) + (Pcar.item(1) ** 2) + (Pcar.item(2) ** 2))) + np.dot(ux, Pcar) #scalr of quaternion
-        qcarworld = Quaternion(w = wCar, x = xyzCar.item(0), y = xyzCar.item(1), z = xyzCar.item(2))
-
-        #Angular Velocity Inputs to the control algorithm
-        omegades = np.matrix([0,0,0])
-        omegacur = self.CoordinateSystems.w_car
+        self.TPN.update(self.car, self.ball, packet.game_info.seconds_elapsed)
+        self.t0 = self.t1
+        self.t1 = packet.game_info.seconds_elapsed
 
         #get current position of trajectory
         time = packet.game_info.seconds_elapsed
@@ -207,42 +120,42 @@ class Test2(BaseAgent):
 
         #True Proportionanl navigation
         gravity = np.array([0,0,-650])
-        Vb_para, Vc_para, Vb_perp, Vc_perp, TPN_acceleration = self.TPN.getNavigationValues()
-        unit_to_ball = (self.ball.position - self.car.position) / np.linalg.norm(self.ball.position - self.car.position)
-        Acc_to_ball = (1500 * unit_to_ball) - gravity
+        Vb_para, Vc_para, Vb_perp, Vc_perp, latax = self.TPN.getNavigationValues()
+        latax_unit = latax / np.linalg.norm(latax)
+        latax_mag = np.linalg.norm(latax)
 
-        TPNaccfix = np.array([TPN_acceleration.item(0), TPN_acceleration.item(1), TPN_acceleration.item(2)]) + Acc_to_ball
-        Acc_unit = TPNaccfix / np.linalg.norm(TPNaccfix)
-        # TPNaccfix = Acc_to_ball
-        TPNacc_mag = np.linalg.norm(TPNaccfix)
-        boostPercent = TPNacc_mag / 991.666 * 100
+        # if(latax_mag > 500):
+        #     latax = latax_unit * 500 #prevent latax from exceeding 500
+
+        # latax = np.array([latax[0], latax[1], -1 * latax[2]])
+        # latax = self.CoordinateSystems.Qcar_to_world.rotate(latax)
+        unit_to_ball = (self.ball.position - self.car.position) / np.linalg.norm(self.ball.position - self.car.position)
+        # Acc_to_ball = ( unit_to_ball) * np.linalg.norm(self.ball.position - self.car.position) * 0.5
+
+        Pcur = np.array([self.car.x, self.car.y, self.car.z])
+        Vcur = self.car.velocity
+        # Vdes = np.array([0,0,100])
+        Vdes = unit_to_ball * 1200
+        Pdes = np.array([self.car.x, self.car.y, self.car.z])
+        Acc_to_ball, accMag = getAccelerationVector_TPN_gains(Pdes, Pcur, Vdes, Vcur)
+        TotalAcceleration = Acc_to_ball + latax
+        # TotalAcceleration = -gravity
+        Acc_unit = TotalAcceleration / np.linalg.norm(TotalAcceleration)
+        TotalAccelerationMag = np.linalg.norm(TotalAcceleration)
+        boostPercent = TotalAccelerationMag / 991.666 * 100
         boostPercent = max(min(boostPercent, 100), 0)
 
-        Qworld_to_acceleration_vector = self.CoordinateSystems.createQuaternion_world_at_car(Acc_unit)
-        torques = getTorques(self.CoordinateSystems.Qworld_to_car, Qworld_to_acceleration_vector, omegades, omegacur)
+        # Qdesired = self.CoordinateSystems.createQuaternion_world_at_car(unit_to_ball)
+        Qdesired= self.CoordinateSystems.createQuaternion_from_point_and_roll(TotalAcceleration, self.car.roll)
+        omegades = np.matrix([0,0,0])
+        omegacur = self.CoordinateSystems.w_car
 
+        torques = getTorques(self.CoordinateSystems.Qworld_to_car, Qdesired, omegades, omegacur)
+        # torques, self.err_previous_PID, self.integration_previous_PID = getTorquesPID(self.CoordinateSystems.Qworld_to_car, Qworld_to_acceleration_vector, self.t0, self.t1, self.err_previous_PID, self.integration_previous_PID)
         #Testing quaternion
         toBall = self.ball.position - self.car.position
 
-        # Qworld_to_acceleration_vector = self.CoordinateSystems.createQuaternion_world_at_car(toBall)
-        # torques = getTorques(self.CoordinateSystems.Qworld_to_car, Qworld_to_acceleration_vector, omegades, omegacur)
-
-        #Send Data to feedbackcontroller
-        #self.car.printVals();
-        if(self.counter.count < self.counter.lap1):
-            self.fbController.pitchControl(thetaDesired, self.current)
-            #try only controlling z velocity
-            # self.fbController.pitchControl(self.car.z, self.car.x, self.car.pitch, self.car.vz, self.car.vx, self.car.wz, self.car.z, self.car.x, self.car.pitch, self.car.vz, self.car.vx, self.car.wz)
-            self.counter.increment()
-        if(self.counter.count >= self.counter.lap1) and (self.counter.count < self.counter.lap2):
-            self.fbController.pitchControl(thetaDesired, self.current)
-            # self.fbController.pitchControl(0, 0, 0, 10, 0, 0, self.car.z, self.car.x, self.car.pitch, self.car.vz, self.car.vx, self.car.wz)
-
-            self.counter.increment()
-        if(self.counter.count >= self.counter.lap2):
-            self.counter.reset()
-
-
+        # print(self.car.velocity)
         #Setting Controller state from values in controller
         #boost value
         # self.controller_state.boost = self.boostCounter.boost(60)
@@ -272,8 +185,8 @@ class Test2(BaseAgent):
         #Contol ball for testing functionss
         x, y, z, vi = self.BallController.bounce(500,500,300,1500)
         Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
-        p = np.array([-1000, -1000, 100])
-        v = np.array([0, 800, 1500])
+        p = np.array([00, 1500, 100])
+        v = np.array([0, -200, 1500])
         ballpos, ballvel = self.BallController.projectileMotion(p, v)
         # vx = self.BallController.oscillateX(-1500, 0, 1000)
         vx = Vt.item(0)
@@ -287,11 +200,12 @@ class Test2(BaseAgent):
         ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
         ball_state_high = BallState(Physics(location=Vector3(0, 0, 1200), velocity = Vector3(0, 0, 300)))
         ball_state_none = BallState()
+        ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
 
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
         car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(-500, -1500, 500),velocity=Vector3(0, 200, 500), rotation = Rotator(pitch = math.pi/1.9, yaw = 0.1, roll = 0), angular_velocity = Vector3(0,0,0)))
+                         physics=Physics(location = Vector3(-1000, -1000, 100),velocity=Vector3(0, -300, 1000), rotation = Rotator(pitch = math.pi/1.9, yaw = 0.1, roll = 0), angular_velocity = Vector3(0,0,0)))
         car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
                          physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
         car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
@@ -306,13 +220,18 @@ class Test2(BaseAgent):
 
 
         if(self.BallController.release == 0):
-            game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
-
-            # game_state = GameState(ball = ball_state_high, cars = {self.index: car_state_high})
             # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-
+            game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
             self.set_game_state(game_state)
-        if(self.BallController.counter1 > 500):
+        # else:
+        #
+        #     # game_state = GameState(cars = {self.index: car_state_hold})
+        #     game_state = GameState(ball = ball_state_linear)
+        #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
+        #
+        # self.set_game_state(game_state)
+
+        if(self.BallController.counter1 > 800):
             self.BallController.release = 0
             self.BallController.counter1 = 0
         else:
@@ -329,8 +248,7 @@ class Test2(BaseAgent):
         #boost vector in car coordinates
         boostVector = np.array([self.controller_state.boost * 991.666, 0, 0])
         #Get values at tk and tk - 1
-        self.t0 = self.t1
-        self.t1 = packet.game_info.seconds_elapsed
+
         self.p0 = self.p1 #position vector at initial time
         self.p1 = self.car.position #position vector at tk+1
         self.v0 = self.v1 #velocity at prior frame
@@ -379,12 +297,12 @@ class Test2(BaseAgent):
         self.renderer.draw_line_3d(np.array([0,0,0]), np.array([0,0,500]), self.renderer.blue())
 
         #Car coordinate system
-        headingx = 100*self.CoordinateSystems.toWorldCoordinates(np.array([1,0,0])) #multiply by 100 to make line longer
-        headingy = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,1,0]))
-        headingz = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,0,1]))
-        self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingx.item(0), self.car.y + headingx.item(1), self.car.z + headingx.item(2)]), self.renderer.red())
-        self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingy.item(0), self.car.y + headingy.item(1), self.car.z + headingy.item(2)]), self.renderer.green())
-        self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingz.item(0), self.car.y + headingz.item(1), self.car.z + headingz.item(2)]), self.renderer.blue())
+        # headingx = 100*self.CoordinateSystems.toWorldCoordinates(np.array([1,0,0])) #multiply by 100 to make line longer
+        # headingy = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,1,0]))
+        # headingz = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,0,1]))
+        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingx.item(0), self.car.y + headingx.item(1), self.car.z + headingx.item(2)]), self.renderer.red())
+        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingy.item(0), self.car.y + headingy.item(1), self.car.z + headingy.item(2)]), self.renderer.green())
+        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingz.item(0), self.car.y + headingz.item(1), self.car.z + headingz.item(2)]), self.renderer.blue())
 
         #Car direction vector on world coordinate system
         # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingx.item(0), headingx.item(1), headingx.item(2)]), self.renderer.red())
@@ -394,20 +312,32 @@ class Test2(BaseAgent):
         #TPN vectors
         #LOS Vector
         LOS, LOSunit = self.TPN.getUnitVectors()
-        # self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.pink())
+        self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.pink())
         # self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.yellow())
 
         self.renderer.draw_line_3d(Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
         #V parallel vectors
         # Vb_para, Vc_para, Vb_perp, Vc_perp, TPN_acceleration = self.TPN.getNavigationValues()
-        self.renderer.draw_line_3d(Vb_para + self.ball.position, self.ball.position, self.renderer.pink())
-        self.renderer.draw_line_3d(Vc_para + self.car.position, self.car.position, self.renderer.pink())
-        self.renderer.draw_line_3d(Vb_perp + Vb_para + self.ball.position, Vb_para + self.ball.position, self.renderer.cyan())
-        self.renderer.draw_line_3d(Vc_perp + Vc_para + self.car.position, Vc_para + self.car.position, self.renderer.cyan())
+        # self.renderer.draw_line_3d(Vb_para + self.ball.position, self.ball.position, self.renderer.pink())
+        # self.renderer.draw_line_3d(Vc_para + self.car.position, self.car.position, self.renderer.pink())
+        # self.renderer.draw_line_3d(Vb_perp + Vb_para + self.ball.position, Vb_para + self.ball.position, self.renderer.cyan())
+        # self.renderer.draw_line_3d(Vc_perp + Vc_para + self.car.position, Vc_para + self.car.position, self.renderer.cyan())
         #draw velocity vectors for sanity check
-        self.renderer.draw_line_3d(self.ball.velocity + self.ball.position, self.ball.position, self.renderer.orange())
-        self.renderer.draw_line_3d(self.car.velocity + self.car.position, self.car.position, self.renderer.orange())
-        self.renderer.draw_line_3d(TPNaccfix + self.car.position, self.car.position, self.renderer.white())
+        # self.renderer.draw_line_3d(self.ball.velocity + self.ball.position, self.ball.position, self.renderer.orange())
+        # self.renderer.draw_line_3d(self.car.velocity + self.car.position, self.car.position, self.renderer.orange())
+        self.renderer.draw_line_3d(TotalAcceleration + self.car.position, self.car.position, self.renderer.white())
+        self.renderer.draw_line_3d(latax + self.car.position + Acc_to_ball, self.car.position + Acc_to_ball, self.renderer.cyan())
+        self.renderer.draw_line_3d(latax + self.car.position, self.car.position, self.renderer.cyan())
+        self.renderer.draw_line_3d(self.TPN.omega*500 + self.car.position, self.car.position, self.renderer.red())
+
+        # self.renderer.draw_line_3d(Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
+        # self.renderer.draw_line_3d(-1*gravity + self.car.position, self.car.position, self.renderer.green())
+        # self.renderer.draw_line_3d(self.TPN.Nt + self.car.position, self.car.position, self.renderer.orange())
+
+        # vec = self.CoordinateSystems.Qcar_to_world.rotate(np.array([500,0,0]))
+        # self.renderer.draw_line_3d(vec + self.car.position, self.car.position, self.renderer.black())
+
+
         # self.renderer.draw_line_3d(toBall + self.car.position, self.car.position, self.renderer.white())
 
 
@@ -567,6 +497,7 @@ class Car:
         self.position = np.array([0,0,0])
         self.velocity = np.array([0,0,0])
         self.angular_velocity = np.array([0,0,0])
+        self.attitude = np.array([0,0,0])
         #MUST CHECK THSESE TO MAKE SURE THEY CORRELATE PROPERLY
 
     def update(self, data):
@@ -594,6 +525,7 @@ class Car:
         self.position = np.array([self.x,self.y,self.z])
         self.velocity = np.array([self.vx, self.vy, self.vz])
         self.angular_velocity = np.array([self.wx, self.wy, self.wz])
+        self.attitude = np.array([self.roll, self.pitch, self.yaw])
 
     def printVals(self):
         print("x:", int(self.x), "y:", self.y, "z:", self.z, "wx:", self.wx, "wy:", self.wy, "wz:", self.wz)
@@ -1155,7 +1087,7 @@ def toEulerAngle(q):
 
 def getTorques(Qw2c, Qw2b, wdes, wcur):
     #define gains
-    kq = np.matrix([100., 100., 100.]).T #quaternion error gain
+    kq = np.matrix([90., 90., 90.]).T #quaternion error gain
     kw = np.matrix([10, 10, 10]).T #omega error gain
 
     T_r = -36.07956616966136; # torque coefficient for roll
@@ -1192,9 +1124,27 @@ def getTorques(Qw2c, Qw2b, wdes, wcur):
     # q = np.matrix(qerrnew)
     torques = -1*(kq * q) - (kw * werr)
     # print('theta', theta, 'torques', torques, 'qerr', Qerr.unit, 'qw2c', Qw2c.unit, 'qc2b', Qw2b.unit)
+    # print(q)
     return torques
 
-def getAccelerationVector(Pdesired, Pcurrent, Vdesired, Vcurrent):
+def getTorquesPID(Qcur, Qdes, t0, t1, err0, integration0):
+    kp = -12
+    ki = 0.00001
+    kd = -9
+
+    Qerr = Qcur.normalised * Qdes.normalised.conjugate.normalised
+    #check for q0 < 0 and if this is true use Q* (conjugate) to give closest rotation
+    if(Qerr.scalar < -1*math.pi):     #use the conjugate of Qerr
+        Qerr = Qerr.unit.conjugate.unit
+
+    err = np.matrix([Qerr.vector])
+    integration_err = integration0 + (1/2) * (err - err0) * (t1-t0)
+    derivative_err = (err-err0) / (t1-t0)
+
+    torques = (kp*err) + (ki*integration_err) + (kd*derivative_err)
+    return torques, err, integration_err
+
+def getAccelerationVector_trajectory_gains(Pdesired, Pcurrent, Vdesired, Vcurrent):
     #gravity vector
     gravity = np.array([0,0,-650])
 
@@ -1224,6 +1174,25 @@ def getAccelerationVector(Pdesired, Pcurrent, Vdesired, Vcurrent):
     #input vector calculation
     acc = -1*np.multiply(kp, Perr) - (np.multiply(kv, Verr))
     acc_gravityfix = acc + gravity
+    accMagnitude = np.linalg.norm(acc_gravityfix)
+
+    return acc_gravityfix, accMagnitude
+
+def getAccelerationVector_TPN_gains(Pdesired, Pcurrent, Vdesired, Vcurrent):
+    #gravity vector
+    gravity = np.array([0,0,-650])
+
+    #error vectors
+    Perr = Pdesired - Pcurrent
+    Verr = Vdesired - Vcurrent
+
+    #gains for state feedback control
+    kp = np.array([3,3,3])
+    kv = np.array([2,2,2])
+
+    #input vector calculation
+    acc = np.multiply(kp, Perr) + (np.multiply(kv, Verr))
+    acc_gravityfix = acc - gravity
     accMagnitude = np.linalg.norm(acc_gravityfix)
 
     return acc_gravityfix, accMagnitude
