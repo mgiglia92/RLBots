@@ -49,15 +49,15 @@ def predictBallTrajectory(ball, tnow):
     vplus = (np.outer(g,t).transpose() + v).transpose()
     splus = ((np.outer(g, np.power(t,2)).transpose() / 2) + np.outer(v, t).transpose() + s).transpose()
 
-    print('s', s, 'splus', splus)
+    # print('s', s, 'splus', splus)
     return splus
 
-def ballPredictionError(ball_before, ball_now, tbefore, tnow):
-    s_before = ball_before.position
-    v_before = ball_before.velocity
+def ballPredictionError(s_before, s_now, v_before, v_now, tbefore, tnow):
     g = np.array([0,0,-650])
-    dt = tnow - tbefore -0.03 #???????????is there some sort of timing issue with the function? is it behind or something?
+    #is the excessive rendering causing timing issues?
+    dt = tnow - tbefore #???????????is there some sort of timing issue with the function? is it behind or something?
     v_predict = g*dt + v_before
     s_predict = (g*(dt**2) / 2) + v_predict*dt + s_before
-    square_error = (s_predict - ball_now.position)**2
+    square_error = (s_predict - s_now)**2
+    print('tnow', tnow, 'tbefore', tbefore)
     return square_error

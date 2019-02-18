@@ -62,8 +62,10 @@ class Test2(BaseAgent):
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
 
-        self.ball_before = Ball()
-        self.ball_now = Ball()
+        self.s_before = np.array([0,0,0])
+        self.s_now = np.array([0,0,0])
+        self.v_before = np.array([0,0,0])
+        self.v_now = np.array([0,0,0])
         self.t0 = 0 #Time at initial time step
         self.t1 = 0 #Time at time step tk+1
         self.p0 = np.array([0,0,0]) #position vector at initial time
@@ -188,7 +190,7 @@ class Test2(BaseAgent):
         x, y, z, vi = self.BallController.bounce(500,500,300,1500)
         Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
         p = np.array([00, 1500, 100])
-        v = np.array([-600, -500, 1500])
+        v = np.array([-600, -800, 1500])
         ballpos, ballvel = self.BallController.projectileMotion(p, v)
         # vx = self.BallController.oscillateX(-1500, 0, 1000)
         vx = Vt.item(0)
@@ -207,7 +209,7 @@ class Test2(BaseAgent):
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
         car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(-1000, -1000, 100),velocity=Vector3(0, -300, 1000), rotation = Rotator(pitch = math.pi/1.9, yaw = 0.1, roll = 0), angular_velocity = Vector3(0,0,0)))
+                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 1000), rotation = Rotator(pitch = math.pi/1.9, yaw = 0.1, roll = 0), angular_velocity = Vector3(0,0,0)))
         car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
                          physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
         car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
@@ -250,8 +252,10 @@ class Test2(BaseAgent):
         #boost vector in car coordinates
         boostVector = np.array([self.controller_state.boost * 991.666, 0, 0])
         #Get values at tk and tk - 1
-        self.ball_before = self.ball_now
-        self.ball_now = self.ball
+        self.s_before = self.s_now
+        self.s_now = self.ball.position
+        self.v_before = self.v_now
+        self.v_now = self.ball.velocity
         self.p0 = self.p1 #position vector at initial time
         self.p1 = self.car.position #position vector at tk+1
         self.v0 = self.v1 #velocity at prior frame
@@ -269,7 +273,7 @@ class Test2(BaseAgent):
         vavg = (self.v1 + self.v0 / 2)
         predictedp1, predictedv1 = Predictions.predict(self.p0, self.v0, self.q0, self.w0, aavg, self.T0, self.t0, self.t1)
         ballposition = Predictions.predictBallTrajectory(self.ball, self.t1)
-        ballerror = Predictions.ballPredictionError(self.ball_before, self.ball_now, self.t0, self.t1)
+        ballerror = Predictions.ballPredictionError(self.s_before, self.s_now, self.v_before, self.v_now, self.t0, self.t1)
         ballerror = ballerror**(1/2)
         errorv = (predictedv1 - self.v1)**2
         errorp = (predictedp1 - self.p1)**2
