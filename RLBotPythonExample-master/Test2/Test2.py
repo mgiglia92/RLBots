@@ -62,6 +62,8 @@ class Test2(BaseAgent):
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
 
+        self.ball_before = Ball()
+        self.ball_now = Ball()
         self.t0 = 0 #Time at initial time step
         self.t1 = 0 #Time at time step tk+1
         self.p0 = np.array([0,0,0]) #position vector at initial time
@@ -135,7 +137,7 @@ class Test2(BaseAgent):
         Pcur = np.array([self.car.x, self.car.y, self.car.z])
         Vcur = self.car.velocity
         # Vdes = np.array([0,0,100])
-        Vdes = unit_to_ball * 1200
+        Vdes = unit_to_ball * 1500
         Pdes = np.array([self.car.x, self.car.y, self.car.z])
         Acc_to_ball, accMag = getAccelerationVector_TPN_gains(Pdes, Pcur, Vdes, Vcur)
         TotalAcceleration = Acc_to_ball + latax
@@ -186,7 +188,7 @@ class Test2(BaseAgent):
         x, y, z, vi = self.BallController.bounce(500,500,300,1500)
         Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
         p = np.array([00, 1500, 100])
-        v = np.array([0, -200, 1500])
+        v = np.array([-600, -500, 1500])
         ballpos, ballvel = self.BallController.projectileMotion(p, v)
         # vx = self.BallController.oscillateX(-1500, 0, 1000)
         vx = Vt.item(0)
@@ -248,7 +250,8 @@ class Test2(BaseAgent):
         #boost vector in car coordinates
         boostVector = np.array([self.controller_state.boost * 991.666, 0, 0])
         #Get values at tk and tk - 1
-
+        self.ball_before = self.ball_now
+        self.ball_now = self.ball
         self.p0 = self.p1 #position vector at initial time
         self.p1 = self.car.position #position vector at tk+1
         self.v0 = self.v1 #velocity at prior frame
@@ -265,7 +268,9 @@ class Test2(BaseAgent):
         aavg = (self.a1 + self.a0) / 2
         vavg = (self.v1 + self.v0 / 2)
         predictedp1, predictedv1 = Predictions.predict(self.p0, self.v0, self.q0, self.w0, aavg, self.T0, self.t0, self.t1)
-
+        ballposition = Predictions.predictBallTrajectory(self.ball, self.t1)
+        ballerror = Predictions.ballPredictionError(self.ball_before, self.ball_now, self.t0, self.t1)
+        ballerror = ballerror**(1/2)
         errorv = (predictedv1 - self.v1)**2
         errorp = (predictedp1 - self.p1)**2
         # print("error^2 v:", errorv, "error^2 p:", errorp)
@@ -341,6 +346,19 @@ class Test2(BaseAgent):
         # self.renderer.draw_line_3d(toBall + self.car.position, self.car.position, self.renderer.white())
 
 
+        #Ball trajectory PREDICTIONS
+
+        self.renderer.draw_line_3d(ballposition[:, 1], self.ball.position, self.renderer.black())
+        self.renderer.draw_line_3d(ballposition[:, 2], self.ball.position, self.renderer.black())
+        self.renderer.draw_line_3d(ballposition[:, 3], self.ball.position, self.renderer.black())
+        self.renderer.draw_line_3d(ballposition[:, 4], self.ball.position, self.renderer.black())
+        self.renderer.draw_line_3d(ballposition[:, 5], self.ball.position, self.renderer.black())
+
+        self.renderer.draw_line_3d(ballposition[:, 0], ballposition[:, 1], self.renderer.yellow())
+        self.renderer.draw_line_3d(ballposition[:, 1], ballposition[:, 2], self.renderer.cyan())
+        self.renderer.draw_line_3d(ballposition[:, 2], ballposition[:, 3], self.renderer.pink())
+        self.renderer.draw_line_3d(ballposition[:, 3], ballposition[:, 4], self.renderer.orange())
+        self.renderer.draw_line_3d(ballposition[:, 4], ballposition[:, 5], self.renderer.green())
 
         #Draw position of ball after converting from Pball_car to Pball_world
         # desired = np.array(self.CoordinateSystems.getVectorToBall_world()).flatten()
@@ -357,22 +375,30 @@ class Test2(BaseAgent):
         # #trajectory vector
         # self.renderer.draw_line_3d(origin, Pdes, self.renderer.orange())
         #
-        # #error rectangles velocities
-        # self.renderer.draw_rect_2d(10,10,int(errorv[0]**(1/2)), 50, True, self.renderer.cyan())
-        # self.renderer.draw_rect_2d(10,60,int(errorv[1]**(1/2)), 50, True, self.renderer.cyan())
-        # self.renderer.draw_rect_2d(10,110,int(errorv[2]**(1/2)), 50, True, self.renderer.cyan())
-        # #text for velocity errors
-        # self.renderer.draw_string_2d(10, 10, 1, 1, "X velocity Error: " + str(errorv[0]**(1/2)), self.renderer.white())
-        # self.renderer.draw_string_2d(10, 60, 1, 1, "Y velocity Error: " + str(errorv[1]**(1/2)), self.renderer.white())
-        # self.renderer.draw_string_2d(10, 110, 1, 1, "Z velocity Error: " + str(errorv[2]**(1/2)), self.renderer.white())
-        # #positions
-        # self.renderer.draw_rect_2d(10,160,int(errorp[0]**(1/2)), 50, True, self.renderer.red())
-        # self.renderer.draw_rect_2d(10,210,int(errorp[1]**(1/2)), 50, True, self.renderer.red())
-        # self.renderer.draw_rect_2d(10,260,int(errorp[2]**(1/2)), 50, True, self.renderer.red())
-        #
-        # self.renderer.draw_string_2d(10, 160, 1, 1, 'X position Error: ' + str(errorp[0]**(1/2)), self.renderer.white())
-        # self.renderer.draw_string_2d(10, 210, 1, 1, "Y position Error: " + str(errorp[1]**(1/2)), self.renderer.white())
-        # self.renderer.draw_string_2d(10, 260, 1, 1, "Z position Error: " + str(errorp[2]**(1/2)), self.renderer.white())
+        #error rectangles velocities
+        self.renderer.draw_rect_2d(10,10,int(errorv[0]**(1/2)), 30, True, self.renderer.cyan())
+        self.renderer.draw_rect_2d(10,40,int(errorv[1]**(1/2)), 30, True, self.renderer.cyan())
+        self.renderer.draw_rect_2d(10,70,int(errorv[2]**(1/2)), 30, True, self.renderer.cyan())
+        #text for velocity errors
+        self.renderer.draw_string_2d(10, 10, 1, 1, "X velocity Error: " + str(errorv[0]**(1/2)), self.renderer.white())
+        self.renderer.draw_string_2d(10, 40, 1, 1, "Y velocity Error: " + str(errorv[1]**(1/2)), self.renderer.white())
+        self.renderer.draw_string_2d(10, 70, 1, 1, "Z velocity Error: " + str(errorv[2]**(1/2)), self.renderer.white())
+        #positions
+        self.renderer.draw_rect_2d(10,100,int(errorp[0]**(1/2)), 30, True, self.renderer.red())
+        self.renderer.draw_rect_2d(10,130,int(errorp[1]**(1/2)), 30, True, self.renderer.red())
+        self.renderer.draw_rect_2d(10,190,int(errorp[2]**(1/2)), 30, True, self.renderer.red())
+
+        self.renderer.draw_string_2d(10, 100, 1, 1, 'X position Error: ' + str(errorp[0]**(1/2)), self.renderer.white())
+        self.renderer.draw_string_2d(10, 130, 1, 1, "Y position Error: " + str(errorp[1]**(1/2)), self.renderer.white())
+        self.renderer.draw_string_2d(10, 160, 1, 1, "Z position Error: " + str(errorp[2]**(1/2)), self.renderer.white())
+        #ball error
+        self.renderer.draw_rect_2d(10,190,int(ballerror[0]), 30, True, self.renderer.red())
+        self.renderer.draw_rect_2d(10,210,int(ballerror[1]), 30, True, self.renderer.red())
+        self.renderer.draw_rect_2d(10,240,int(ballerror[2]), 30, True, self.renderer.red())
+
+        self.renderer.draw_string_2d(10, 190, 1, 1, 'X ball Error: ' + str(ballerror[0]), self.renderer.white())
+        self.renderer.draw_string_2d(10, 210, 1, 1, "Y ball Error: " + str(ballerror[1]), self.renderer.white())
+        self.renderer.draw_string_2d(10, 240, 1, 1, "Z ball Error: " + str(ballerror[2]), self.renderer.white())
 
         self.renderer.end_rendering()
 
@@ -453,9 +479,14 @@ class Vector2:
 
 class Ball:
     def __init__(self):
-        self.x = None
-        self.y = None
-        self.z = None
+        self.x = 0
+        self.y = 0
+        self.z = 0
+        self.vx = 0
+        self.vy = 0
+        self.vz = 0
+        self.position = np.array([0,0,0])
+        self.velocity = np.array([0,0,0])
         self.Inertia = np.array([[1,0,0], [0,1,0], [0,0,1]])
 
     def update(self, data):

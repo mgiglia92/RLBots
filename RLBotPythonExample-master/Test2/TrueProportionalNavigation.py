@@ -113,7 +113,7 @@ class TPN:
         accmag = np.linalg.norm(self.accelerationVector)
         accAngle = np.arccos(inner / (accmag * losmag)) * 180 / math.pi
         # self.accelerationVector = np.array([self.accelerationVector.item(0), self.accelerationVector.item(1), -1*self.accelerationVector.item(2)])
-        print (accAngle)
+        # print (accAngle)
         #fixing acceleration vector directions for some reason
         self.accelerationVector = np.array([self.accelerationVector[0],self.accelerationVector[1],self.accelerationVector[2]])
         return self.Vb_parallel, self.Vc_parallel, self.Vb_perpendicular, self.Vc_perpendicular, self.accelerationVector
