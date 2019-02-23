@@ -13,6 +13,7 @@ from pyquaternion import Quaternion
 from TrajectoryGeneration import Trajectory
 from TrueProportionalNavigation import TPN
 import controller as con
+import State as s
 # import tensorflow
 # tf.merge_all_summaries = tf.summary.merge_all
 # tf.train.SummaryWriter = tf.summary.FileWriter
@@ -63,6 +64,8 @@ class Test2(BaseAgent):
         self.Trajectory.startTrajectory('circular')
         self.data = Plotting.data()
         self.TPN = TPN()
+        self.state = s.State()
+        self.controller = con.Controller()
 
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
@@ -98,13 +101,20 @@ class Test2(BaseAgent):
         self.t0 = self.t1
         self.t1 = packet.game_info.seconds_elapsed
 
-        #Run flight interception algorithm and get the controller values from the algorithm
-        controller = self.flight_interception()
+        #Set car state (forcing to whichever algo i am working on)
+        self.state.set_state(0)
 
-        #Set the controller state
-        self.setControllerState(controller.boostPercent, controller.torques, controller.jump, 0, 0, 0)
+        controller_flight = self.flight_interception()
 
-        #Contol ball for testing functionss
+        controller_ground = self.ground_interception()
+
+        #Set the controller state depending on which state the car is in
+        if(self.state.current_state == 0): #Car is in driving state
+            self.setControllerState(controller_ground)
+        if(self.state.current_state == 1):
+            self.setControllerState(controller_flight)
+
+        #Control ball for testing functionss
         x, y, z, vi = self.BallController.bounce(500,500,300,1500)
         Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
         p = np.array([00, 1500, 100])
@@ -165,6 +175,7 @@ class Test2(BaseAgent):
 
         #Predictions
         self.prediction()
+
         #RENDERING
         self.render()
 
@@ -219,13 +230,25 @@ class Test2(BaseAgent):
         # self.ax3.plot(data.d4, data.d3)
         plt.show()
 
-    def setControllerState(self,  boostPercent, torques, jump, turn, gas, brake):
-        self.controller_state.boost = self.boostCounter.boost(boostPercent)
+    def state_controller(self):
+        #Do algorithm to determine what state the car should be in
+        None
+
+    def setControllerState(self, controller):
+        # self.controller_state.boost = self.boostCounter.boost(boostPercent)
+        self.controller_state.boost = self.boostCounter2.boost(controller.boostPercent)
         # #roll, pitch, yaw values
-        self.controller_state.pitch = max(min(torques.item(1), 1), -1)
-        self.controller_state.roll = max(min(torques.item(0), 1), -1)
-        self.controller_state.yaw =  -1*max(min(torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
-        self.controller_state.jump = jump
+        self.controller_state.pitch = max(min(controller.torques.item(1), 1), -1)
+        self.controller_state.roll = max(min(controller.torques.item(0), 1), -1)
+        self.controller_state.yaw =  -1*max(min(controller.torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
+        self.controller_state.jump = controller.jump
+        self.controller_state.throttle = controller.throttle
+        self.controller_state.brake = controller.brake
+        self.controller_state.turn = controller.turn
+
+    def ground_interception(self):
+        controller = con.Controller()
+        return controller
 
     def flight_interception(self):
         controller = con.Controller()
@@ -901,10 +924,10 @@ class BoostCounter: #
 class BoostCounter2:
     def __init__(self):
         self.boost_counter = 0.0
-        self.B_max = 1000.0
+        self.B_max = 100.0
 
     def boost(self, boostPercentage):
-        boostPercentage = clamp(boostPercentage, 0, 1000)
+        boostPercentage = clamp(boostPercentage, 0, 100.0)
         use_boost = 0.0
         use_boost -= round(self.boost_counter)
         self.boost_counter += (boostPercentage) / self.B_max

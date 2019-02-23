@@ -59,5 +59,5 @@ def ballPredictionError(s_before, s_now, v_before, v_now, tbefore, tnow):
     v_predict = g*dt + v_before
     s_predict = (g*(dt**2) / 2) + v_predict*dt + s_before
     square_error = (s_predict - s_now)**2
-    print('tnow', tnow, 'tbefore', tbefore)
+    # print('tnow', tnow, 'tbefore', tbefore)
     return square_error
