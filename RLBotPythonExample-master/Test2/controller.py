@@ -12,4 +12,7 @@ from rlbot.utils.game_state_util import BallState
 class Controller():
 
     def __init__(self):
-        self.something = 1
+        self.boostPercent = None
+        self.torques = None
+        self.jump = None
+        

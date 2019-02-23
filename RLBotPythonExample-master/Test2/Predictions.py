@@ -45,7 +45,7 @@ def predictBallTrajectory(ball, tnow):
     s = ball.position
     v = ball.velocity
     g = np.array([0,0,-650]).transpose()
-    t = np.linspace(0, 2, num = 10).transpose()
+    t = np.linspace(0, 20, num =20).transpose()
     vplus = (np.outer(g,t).transpose() + v).transpose()
     splus = ((np.outer(g, np.power(t,2)).transpose() / 2) + np.outer(v, t).transpose() + s).transpose()
 

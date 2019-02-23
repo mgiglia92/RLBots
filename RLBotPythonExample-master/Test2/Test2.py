@@ -12,6 +12,7 @@ from BallController import BallController
 from pyquaternion import Quaternion
 from TrajectoryGeneration import Trajectory
 from TrueProportionalNavigation import TPN
+import controller as con
 # import tensorflow
 # tf.merge_all_summaries = tf.summary.merge_all
 # tf.train.SummaryWriter = tf.summary.FileWriter
@@ -27,6 +28,7 @@ from rlbot.utils.game_state_util import Vector3
 from rlbot.utils.game_state_util import Rotator
 from rlbot.utils.game_state_util import BallState
 
+from enum import Enum
 import random
 import control #Control system python library
 import numpy as np
@@ -37,10 +39,13 @@ import numpy as np
 import numpy as np
 import scipy.linalg
 
+import traceback
+
 class Test2(BaseAgent):
 
     def initialize_agent(self):
         #This runs once before the bot starts up
+        self.packet = None
         self.controller_state = SimpleControllerState()
         self.resetFlag = 0;
         self.setCarState()
@@ -86,42 +91,144 @@ class Test2(BaseAgent):
         self.plotFlag = False
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
-        #Original Code
-        my_car = packet.game_cars[self.index]
-        ball_location = Vector2(packet.game_ball.physics.location.x, packet.game_ball.physics.location.y)
-        car_location = Vector2(my_car.physics.location.x, my_car.physics.location.y)
-        car_direction = get_car_facing_vector(my_car)
-        car_to_ball = ball_location - car_location
-
-
         #update class data
+        self.update_data(packet)
+
+        #shift t1 to previous time t0, and set t1 to the new current time
+        self.t0 = self.t1
+        self.t1 = packet.game_info.seconds_elapsed
+
+        #Run flight interception algorithm and get the controller values from the algorithm
+        controller = self.flight_interception()
+
+        #Set the controller state
+        self.setControllerState(controller.boostPercent, controller.torques, controller.jump, 0, 0, 0)
+
+        #Contol ball for testing functionss
+        x, y, z, vi = self.BallController.bounce(500,500,300,1500)
+        Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
+        p = np.array([00, 1500, 100])
+        v = np.array([-600, -500, 1500])
+        ballpos, ballvel = self.BallController.projectileMotion(p, v)
+        # vx = self.BallController.oscillateX(-1500, 0, 1000)
+        vx = Vt.item(0)
+        vy = Vt.item(1)
+        # vz = 0
+
+        #Set ball and car states to set game state for testing
+        ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
+        ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
+        ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
+        ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
+        ball_state_high = BallState(Physics(location=Vector3(0, 0, 1200), velocity = Vector3(0, 0, 300)))
+        ball_state_none = BallState()
+        ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
+
+        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
+        #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
+        car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
+                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 200), rotation = Rotator(pitch = math.pi/8, yaw = math.pi/2, roll = 0), angular_velocity = Vector3(0,0,0)))
+        car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
+                         physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
+        car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
+        car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
+                         physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
+        # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
+        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
+
+        #Pointed down car state for maximum initial error
+        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
+        #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
+
+
+        if(self.BallController.release == 0):
+            # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
+            game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
+            self.set_game_state(game_state)
+        # else:
+        #
+        #     # game_state = GameState(cars = {self.index: car_state_hold})
+        #     game_state = GameState(ball = ball_state_linear)
+        #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
+        #
+        # self.set_game_state(game_state)
+
+        #Reset to initial states after counter runs
+        if(self.BallController.counter1 > 800):
+            self.BallController.release = 0
+            self.BallController.counter1 = 0
+        else:
+            # game_state = GameState(ball = ball_state, cars = {self.index: car_stateHoldPosition})
+            # game_state = GameState(cars = {self.index: car_state_falling})
+            game_state = GameState(ball = ball_state_none)
+            self.set_game_state(game_state)
+
+        #Predictions
+        self.prediction()
+        #RENDERING
+        self.render()
+
+        return self.controller_state
+
+    def reset(self):
+        game_state = GameState()
+        self.set_game_state(game_state)
+        car_state = CarState(physics(location = Vector3 (x=-1000, y=0, z=250), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(0, 0, 0), angular_velocity=Vector3(0, 0, 0)))
+
+        ball_state = BallState(Physics(location=Vector3(500, 0, None)))
+        game_state = GameState(ball=ball_state, cars={self.index: car_state})
+        self.set_game_state(game_state)
+
+    def setBall(self):
+        ball_state = BallState(Physics(location=Vector3(1000,0,800)))
+        game_state = GameState(ball=ball_state)
+        self.set_game_state(game_state)
+
+    def setCarState(self):
+        game_state = GameState()
+        self.set_game_state(game_state)
+        car_state = CarState(jumped=False, double_jumped=False, boost_amount=100,
+                         physics=Physics(location = Vector3 (x=-1800, y=0, z=550), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(math.pi / 2, 0, 0), angular_velocity=Vector3(0, 0, 0)))
+
+        ball_state = BallState(Physics(location=Vector3(1000, 0, 800), velocity=Vector3(x=0, y=0, z=0)))
+        game_state = GameState(ball=ball_state, cars={self.index: car_state})
+        self.set_game_state(game_state)
+
+    def update_data(self, packet):
+        self.packet = packet
         self.car.update(packet.game_cars[self.index])
         self.ball.update(packet.game_ball)
         self.CoordinateSystems.update(self.car, self.ball)
         self.BallController.update(packet.game_ball)
         self.TPN.update(self.car, self.ball, packet.game_info.seconds_elapsed)
-        self.t0 = self.t1
-        self.t1 = packet.game_info.seconds_elapsed
 
-        #get current position of trajectory
-        time = packet.game_info.seconds_elapsed
-        Pdes, Vdes = self.Trajectory.circularTrajectory(1000, .5, time, 1500)#A, w, t, height
-        # Pdes = np.array([self.ball.x, self.ball.y, self.ball.z])
-        # Vdes = np.array([self.ball.vx, self.ball.vy, self.ball.vz])
-        #CONTROL SYSTEM ALGORITHMS
-        #get acceleration vector
-        Pcur = np.array([self.car.x, self.car.y, self.car.z])
-        Vcur = np.array([self.car.vx, self.car.vy, self.car.vz])
+    def plotData(self, data):
+        self.fig1 = plt.figure()
+        self.ax1  = self.fig1.gca()
+        self.ax1.plot(data.d4, data.d3)
+        # self.fig2 = plt.figure()
+        # self.ax2  = self.fig3.gca()
+        # self.ax2.plot(data.d4, data.d2)
+        # self.fig3 = plt.figure()
+        # self.ax3  = self.fig3.gca()
+        # self.ax3.plot(data.d4, data.d3)
 
-        # acc, accMagnitude = getAccelerationVector(Pdes, Pcur, Vdes, Vcur)
-        # accfix = np.array([-1*acc.item(0), acc.item(1), acc.item(2)])
-        # boostPercent = accMagnitude / 991.666 * 100
-        # boostPercent = max(min(boostPercent, 100), 0)
-        # # print('acc:', acc, 'accmag', accMagnitude)
-        # Qworld_to_acceleration_vector = self.CoordinateSystems.createQuaternion_world_at_car(accfix)
-        # torques = getTorques(self.CoordinateSystems.Qworld_to_car, Qworld_to_acceleration_vector, omegades, omegacur)
+        # self.ax1.plot(data.d4, data.d2, 'r')
+        # self.ax1.plot(data.d4, data.d3, 'o')
+        # self.ax2.plot(data.d4, data.d2)
+        # self.ax3.plot(data.d4, data.d3)
+        plt.show()
 
+    def setControllerState(self,  boostPercent, torques, jump, turn, gas, brake):
+        self.controller_state.boost = self.boostCounter.boost(boostPercent)
+        # #roll, pitch, yaw values
+        self.controller_state.pitch = max(min(torques.item(1), 1), -1)
+        self.controller_state.roll = max(min(torques.item(0), 1), -1)
+        self.controller_state.yaw =  -1*max(min(torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
+        self.controller_state.jump = jump
 
+    def flight_interception(self):
+        controller = con.Controller()
         #True Proportionanl navigation
         gravity = np.array([0,0,-650])
         Vb_para, Vc_para, Vb_perp, Vc_perp, latax = self.TPN.getNavigationValues()
@@ -159,91 +266,23 @@ class Test2(BaseAgent):
         #Testing quaternion
         toBall = self.ball.position - self.car.position
 
-        # print(self.car.velocity)
-        #Setting Controller state from values in controller
-        #boost value
-        # self.controller_state.boost = self.boostCounter.boost(60)
-        # self.controller_state.boost = 1
-        self.controller_state.boost = self.boostCounter.boost(boostPercent)
-        # #roll, pitch, yaw values
-        self.controller_state.pitch = max(min(torques.item(1), 1), -1)
-        self.controller_state.roll = max(min(torques.item(0), 1), -1)
-        self.controller_state.yaw =  -1*max(min(torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
+        #Save data to self variables for rendering
+        self.Acc_to_ball = Acc_to_ball
+        self.latax = latax
+        self.TotalAcceleration = TotalAcceleration
 
-        # self.controller_state.pitch = 0
-        # self.controller_state.roll = 0
-        # self.controller_state.yaw =  0 #changes in rotations about coordinate system cause z axis changes
-
-
-
-
-        # self.controller_state.pitch = 0.0#max(min(torques.item(1), 1), -1) #self.fbController.pitchPercent
-        # self.controller_state.roll = 0.0#max(min(torques.item(0), 1), -1)
-        # self.controller_state.yaw = 1#max(min(torques.item(2), 1), -1)
-
-        #Make car jump if its on the floor
-        if(packet.game_cars[self.index].has_wheel_contact):
-            self.controller_state.jump = True
+        if(self.packet.game_cars[self.index].has_wheel_contact):
+            jump = True
         else:
-            self.controller_state.jump = False
-        #Contol ball for testing functionss
-        x, y, z, vi = self.BallController.bounce(500,500,300,1500)
-        Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
-        p = np.array([00, 1500, 100])
-        v = np.array([-600, -800, 1500])
-        ballpos, ballvel = self.BallController.projectileMotion(p, v)
-        # vx = self.BallController.oscillateX(-1500, 0, 1000)
-        vx = Vt.item(0)
-        vy = Vt.item(1)
-        # vz = 0
+            jump = False
 
-        #Set ball and car states to set game state for testing
-        ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
-        ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
-        ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
-        ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
-        ball_state_high = BallState(Physics(location=Vector3(0, 0, 1200), velocity = Vector3(0, 0, 300)))
-        ball_state_none = BallState()
-        ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
+        controller.torques = torques
+        controller.boostPercent = boostPercent
+        controller.jump = jump
 
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
-        car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 1000), rotation = Rotator(pitch = math.pi/1.9, yaw = 0.1, roll = 0), angular_velocity = Vector3(0,0,0)))
-        car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
-        car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
-        car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
-                         physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
-        # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
+        return controller
 
-        #Pointed down car state for maximum initial error
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-        #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
-
-
-        if(self.BallController.release == 0):
-            # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-            game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
-            self.set_game_state(game_state)
-        # else:
-        #
-        #     # game_state = GameState(cars = {self.index: car_state_hold})
-        #     game_state = GameState(ball = ball_state_linear)
-        #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-        #
-        # self.set_game_state(game_state)
-
-        if(self.BallController.counter1 > 800):
-            self.BallController.release = 0
-            self.BallController.counter1 = 0
-        else:
-            # game_state = GameState(ball = ball_state, cars = {self.index: car_stateHoldPosition})
-            # game_state = GameState(cars = {self.index: car_state_falling})
-            game_state = GameState(ball = ball_state_none)
-            self.set_game_state(game_state)
-
+    def prediction(self):
         #PREDICTIONS
         #torque coefficients
         T_r = 36.07956616966136; # torque coefficient for roll
@@ -272,185 +311,142 @@ class Test2(BaseAgent):
         aavg = (self.a1 + self.a0) / 2
         vavg = (self.v1 + self.v0 / 2)
         predictedp1, predictedv1 = Predictions.predict(self.p0, self.v0, self.q0, self.w0, aavg, self.T0, self.t0, self.t1)
-        ballposition = Predictions.predictBallTrajectory(self.ball, self.t1)
-        ballerror = Predictions.ballPredictionError(self.s_before, self.s_now, self.v_before, self.v_now, self.t0, self.t1)
-        ballerror = ballerror**(1/2)
-        errorv = (predictedv1 - self.v1)**2
-        errorp = (predictedp1 - self.p1)**2
+        self.ballposition = Predictions.predictBallTrajectory(self.ball, self.t1)
+        self.ballerror = Predictions.ballPredictionError(self.s_before, self.s_now, self.v_before, self.v_now, self.t0, self.t1)
+        self.ballerror = self.ballerror**(1/2)
+        self.errorv = (predictedv1 - self.v1)**2
+        self.errorp = (predictedp1 - self.p1)**2
         # print("error^2 v:", errorv, "error^2 p:", errorp)
         # print("z actual:", self.car.z, "z predicted:", predictedp1[2])
-        self.data.add(self.v1[0], predictedv1[0], errorv[0], self.t1)
+        self.data.add(self.v1[0], predictedv1[0], self.errorv[0], self.t1)
 
-        #PLOTTING
-        if(self.plotTime0 == None):
-            self.plotTime0 = packet.game_info.seconds_elapsed
-        else:
-            self.plotTime1 = packet.game_info.seconds_elapsed
-        if(self.plotTime1 != None):
-            if((self.plotTime1 - self.plotTime0) > 10):
-                # self.plotData(self.data)
-                None
+    def render(self):
+        try:
+            #RENDERING
+            self.renderer.begin_rendering()
 
+            #helpful vectors for rendering
+            car = np.array([self.car.x, self.car.y, self.car.z]).flatten()
+            ball = np.array([self.ball.x, self.ball.y, self.ball.z]).flatten()
+            origin = np.array([0,0,0])
+            #World coordinate system
+            self.renderer.draw_line_3d(np.array([0,0,0]), np.array([500,0,0]), self.renderer.red())
+            self.renderer.draw_line_3d(np.array([0,0,0]), np.array([0,500,0]), self.renderer.green())
+            self.renderer.draw_line_3d(np.array([0,0,0]), np.array([0,0,500]), self.renderer.blue())
 
+            #Car coordinate system
+            # headingx = 100*self.CoordinateSystems.toWorldCoordinates(np.array([1,0,0])) #multiply by 100 to make line longer
+            # headingy = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,1,0]))
+            # headingz = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,0,1]))
+            # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingx.item(0), self.car.y + headingx.item(1), self.car.z + headingx.item(2)]), self.renderer.red())
+            # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingy.item(0), self.car.y + headingy.item(1), self.car.z + headingy.item(2)]), self.renderer.green())
+            # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingz.item(0), self.car.y + headingz.item(1), self.car.z + headingz.item(2)]), self.renderer.blue())
 
-        #RENDERING
-        self.renderer.begin_rendering()
+            #Car direction vector on world coordinate system
+            # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingx.item(0), headingx.item(1), headingx.item(2)]), self.renderer.red())
+            # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingy.item(0), headingy.item(1), headingy.item(2)]), self.renderer.green())
+            # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingz.item(0), headingz.item(1), headingz.item(2)]), self.renderer.blue())
 
-        #helpful vectors for rendering
-        car = np.array([self.car.x, self.car.y, self.car.z]).flatten()
-        ball = np.array([self.ball.x, self.ball.y, self.ball.z]).flatten()
-        origin = np.array([0,0,0])
-        #World coordinate system
-        self.renderer.draw_line_3d(np.array([0,0,0]), np.array([500,0,0]), self.renderer.red())
-        self.renderer.draw_line_3d(np.array([0,0,0]), np.array([0,500,0]), self.renderer.green())
-        self.renderer.draw_line_3d(np.array([0,0,0]), np.array([0,0,500]), self.renderer.blue())
+            #TPN vectors
+            #LOS Vector
+            LOS, LOSunit = self.TPN.getUnitVectors()
+            self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.pink())
+            # self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.yellow())
 
-        #Car coordinate system
-        # headingx = 100*self.CoordinateSystems.toWorldCoordinates(np.array([1,0,0])) #multiply by 100 to make line longer
-        # headingy = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,1,0]))
-        # headingz = 100*self.CoordinateSystems.toWorldCoordinates(np.array([0,0,1]))
-        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingx.item(0), self.car.y + headingx.item(1), self.car.z + headingx.item(2)]), self.renderer.red())
-        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingy.item(0), self.car.y + headingy.item(1), self.car.z + headingy.item(2)]), self.renderer.green())
-        # self.renderer.draw_line_3d(np.array([self.car.x, self.car.y, self.car.z]), np.array([self.car.x + headingz.item(0), self.car.y + headingz.item(1), self.car.z + headingz.item(2)]), self.renderer.blue())
+            self.renderer.draw_line_3d(self.Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
+            #V parallel vectors
+            # Vb_para, Vc_para, Vb_perp, Vc_perp, TPN_acceleration = self.TPN.getNavigationValues()
+            # self.renderer.draw_line_3d(Vb_para + self.ball.position, self.ball.position, self.renderer.pink())
+            # self.renderer.draw_line_3d(Vc_para + self.car.position, self.car.position, self.renderer.pink())
+            # self.renderer.draw_line_3d(Vb_perp + Vb_para + self.ball.position, Vb_para + self.ball.position, self.renderer.cyan())
+            # self.renderer.draw_line_3d(Vc_perp + Vc_para + self.car.position, Vc_para + self.car.position, self.renderer.cyan())
+            #draw velocity vectors for sanity check
+            # self.renderer.draw_line_3d(self.ball.velocity + self.ball.position, self.ball.position, self.renderer.orange())
+            # self.renderer.draw_line_3d(self.car.velocity + self.car.position, self.car.position, self.renderer.orange())
+            self.renderer.draw_line_3d(self.TotalAcceleration + self.car.position, self.car.position, self.renderer.white())
+            self.renderer.draw_line_3d(self.latax + self.car.position + self.Acc_to_ball, self.car.position + self.Acc_to_ball, self.renderer.cyan())
+            self.renderer.draw_line_3d(self.latax + self.car.position, self.car.position, self.renderer.cyan())
+            self.renderer.draw_line_3d(self.TPN.omega*500 + self.car.position, self.car.position, self.renderer.red())
 
-        #Car direction vector on world coordinate system
-        # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingx.item(0), headingx.item(1), headingx.item(2)]), self.renderer.red())
-        # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingy.item(0), headingy.item(1), headingy.item(2)]), self.renderer.green())
-        # self.renderer.draw_line_3d(np.array([0,0,0]), np.array([headingz.item(0), headingz.item(1), headingz.item(2)]), self.renderer.blue())
+            # self.renderer.draw_line_3d(Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
+            # self.renderer.draw_line_3d(-1*gravity + self.car.position, self.car.position, self.renderer.green())
+            # self.renderer.draw_line_3d(self.TPN.Nt + self.car.position, self.car.position, self.renderer.orange())
 
-        #TPN vectors
-        #LOS Vector
-        LOS, LOSunit = self.TPN.getUnitVectors()
-        self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.pink())
-        # self.renderer.draw_line_3d(LOS + self.car.position, self.car.position, self.renderer.yellow())
-
-        self.renderer.draw_line_3d(Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
-        #V parallel vectors
-        # Vb_para, Vc_para, Vb_perp, Vc_perp, TPN_acceleration = self.TPN.getNavigationValues()
-        # self.renderer.draw_line_3d(Vb_para + self.ball.position, self.ball.position, self.renderer.pink())
-        # self.renderer.draw_line_3d(Vc_para + self.car.position, self.car.position, self.renderer.pink())
-        # self.renderer.draw_line_3d(Vb_perp + Vb_para + self.ball.position, Vb_para + self.ball.position, self.renderer.cyan())
-        # self.renderer.draw_line_3d(Vc_perp + Vc_para + self.car.position, Vc_para + self.car.position, self.renderer.cyan())
-        #draw velocity vectors for sanity check
-        # self.renderer.draw_line_3d(self.ball.velocity + self.ball.position, self.ball.position, self.renderer.orange())
-        # self.renderer.draw_line_3d(self.car.velocity + self.car.position, self.car.position, self.renderer.orange())
-        self.renderer.draw_line_3d(TotalAcceleration + self.car.position, self.car.position, self.renderer.white())
-        self.renderer.draw_line_3d(latax + self.car.position + Acc_to_ball, self.car.position + Acc_to_ball, self.renderer.cyan())
-        self.renderer.draw_line_3d(latax + self.car.position, self.car.position, self.renderer.cyan())
-        self.renderer.draw_line_3d(self.TPN.omega*500 + self.car.position, self.car.position, self.renderer.red())
-
-        # self.renderer.draw_line_3d(Acc_to_ball + self.car.position, self.car.position, self.renderer.yellow())
-        # self.renderer.draw_line_3d(-1*gravity + self.car.position, self.car.position, self.renderer.green())
-        # self.renderer.draw_line_3d(self.TPN.Nt + self.car.position, self.car.position, self.renderer.orange())
-
-        # vec = self.CoordinateSystems.Qcar_to_world.rotate(np.array([500,0,0]))
-        # self.renderer.draw_line_3d(vec + self.car.position, self.car.position, self.renderer.black())
+            # vec = self.CoordinateSystems.Qcar_to_world.rotate(np.array([500,0,0]))
+            # self.renderer.draw_line_3d(vec + self.car.position, self.car.position, self.renderer.black())
 
 
-        # self.renderer.draw_line_3d(toBall + self.car.position, self.car.position, self.renderer.white())
+            # self.renderer.draw_line_3d(toBall + self.car.position, self.car.position, self.renderer.white())
 
 
-        #Ball trajectory PREDICTIONS
+            #Ball trajectory PREDICTIONS
 
-        self.renderer.draw_line_3d(ballposition[:, 1], self.ball.position, self.renderer.black())
-        self.renderer.draw_line_3d(ballposition[:, 2], self.ball.position, self.renderer.black())
-        self.renderer.draw_line_3d(ballposition[:, 3], self.ball.position, self.renderer.black())
-        self.renderer.draw_line_3d(ballposition[:, 4], self.ball.position, self.renderer.black())
-        self.renderer.draw_line_3d(ballposition[:, 5], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 1], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 2], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 3], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 4], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 5], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 6], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 7], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 8], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 9], self.ball.position, self.renderer.black())
+            self.renderer.draw_line_3d(self.ballposition[:, 10], self.ball.position, self.renderer.black())
 
-        self.renderer.draw_line_3d(ballposition[:, 0], ballposition[:, 1], self.renderer.yellow())
-        self.renderer.draw_line_3d(ballposition[:, 1], ballposition[:, 2], self.renderer.cyan())
-        self.renderer.draw_line_3d(ballposition[:, 2], ballposition[:, 3], self.renderer.pink())
-        self.renderer.draw_line_3d(ballposition[:, 3], ballposition[:, 4], self.renderer.orange())
-        self.renderer.draw_line_3d(ballposition[:, 4], ballposition[:, 5], self.renderer.green())
+            self.renderer.draw_line_3d(self.ballposition[:, 0], self.ballposition[:, 1], self.renderer.yellow())
+            self.renderer.draw_line_3d(self.ballposition[:, 1], self.ballposition[:, 2], self.renderer.cyan())
+            self.renderer.draw_line_3d(self.ballposition[:, 2], self.ballposition[:, 3], self.renderer.pink())
+            self.renderer.draw_line_3d(self.ballposition[:, 3], self.ballposition[:, 4], self.renderer.orange())
+            self.renderer.draw_line_3d(self.ballposition[:, 4], self.ballposition[:, 5], self.renderer.green())
+            self.renderer.draw_line_3d(self.ballposition[:, 5], self.ballposition[:, 6], self.renderer.yellow())
+            self.renderer.draw_line_3d(self.ballposition[:, 6], self.ballposition[:, 7], self.renderer.cyan())
+            self.renderer.draw_line_3d(self.ballposition[:, 7], self.ballposition[:, 8], self.renderer.pink())
+            self.renderer.draw_line_3d(self.ballposition[:, 8], self.ballposition[:, 9], self.renderer.orange())
+            self.renderer.draw_line_3d(self.ballposition[:, 9], self.ballposition[:, 10], self.renderer.green())
 
-        #Draw position of ball after converting from Pball_car to Pball_world
-        # desired = np.array(self.CoordinateSystems.getVectorToBall_world()).flatten()
-        # self.renderer.draw_line_3d(car, car + desired, self.renderer.yellow())
+            #Draw position of ball after converting from Pball_car to Pball_world
+            # desired = np.array(self.CoordinateSystems.getVectorToBall_world()).flatten()
+            # self.renderer.draw_line_3d(car, car + desired, self.renderer.yellow())
 
-        #Car to ball vector
+            #Car to ball vector
 
-        # self.renderer.draw_rect_3d(car+desired, 100, 100, 0, self.renderer.teal())
+            # self.renderer.draw_rect_3d(car+desired, 100, 100, 0, self.renderer.teal())
 
-        #Acceleration vector
-        # a = np.array([accfix.item(0), -1*accfix.item(1),-1*accfix.item(2)])
-        # self.renderer.draw_line_3d(car, car + a/10, self.renderer.pink())
-        #
-        # #trajectory vector
-        # self.renderer.draw_line_3d(origin, Pdes, self.renderer.orange())
-        #
-        #error rectangles velocities
-        self.renderer.draw_rect_2d(10,10,int(errorv[0]**(1/2)), 30, True, self.renderer.cyan())
-        self.renderer.draw_rect_2d(10,40,int(errorv[1]**(1/2)), 30, True, self.renderer.cyan())
-        self.renderer.draw_rect_2d(10,70,int(errorv[2]**(1/2)), 30, True, self.renderer.cyan())
-        #text for velocity errors
-        self.renderer.draw_string_2d(10, 10, 1, 1, "X velocity Error: " + str(errorv[0]**(1/2)), self.renderer.white())
-        self.renderer.draw_string_2d(10, 40, 1, 1, "Y velocity Error: " + str(errorv[1]**(1/2)), self.renderer.white())
-        self.renderer.draw_string_2d(10, 70, 1, 1, "Z velocity Error: " + str(errorv[2]**(1/2)), self.renderer.white())
-        #positions
-        self.renderer.draw_rect_2d(10,100,int(errorp[0]**(1/2)), 30, True, self.renderer.red())
-        self.renderer.draw_rect_2d(10,130,int(errorp[1]**(1/2)), 30, True, self.renderer.red())
-        self.renderer.draw_rect_2d(10,190,int(errorp[2]**(1/2)), 30, True, self.renderer.red())
+            #Acceleration vector
+            # a = np.array([accfix.item(0), -1*accfix.item(1),-1*accfix.item(2)])
+            # self.renderer.draw_line_3d(car, car + a/10, self.renderer.pink())
+            #
+            # #trajectory vector
+            # self.renderer.draw_line_3d(origin, Pdes, self.renderer.orange())
+            #
+            #error rectangles velocities
+            self.renderer.draw_rect_2d(10,10,int(self.errorv[0]**(1/2)), 30, True, self.renderer.cyan())
+            self.renderer.draw_rect_2d(10,40,int(self.errorv[1]**(1/2)), 30, True, self.renderer.cyan())
+            self.renderer.draw_rect_2d(10,70,int(self.errorv[2]**(1/2)), 30, True, self.renderer.cyan())
+            #text for velocity errors
+            self.renderer.draw_string_2d(10, 10, 1, 1, "X velocity Error: " + str(self.errorv[0]**(1/2)), self.renderer.white())
+            self.renderer.draw_string_2d(10, 40, 1, 1, "Y velocity Error: " + str(self.errorv[1]**(1/2)), self.renderer.white())
+            self.renderer.draw_string_2d(10, 70, 1, 1, "Z velocity Error: " + str(self.errorv[2]**(1/2)), self.renderer.white())
+            #positions
+            self.renderer.draw_rect_2d(10,100,int(self.errorp[0]**(1/2)), 30, True, self.renderer.red())
+            self.renderer.draw_rect_2d(10,130,int(self.errorp[1]**(1/2)), 30, True, self.renderer.red())
+            self.renderer.draw_rect_2d(10,190,int(self.errorp[2]**(1/2)), 30, True, self.renderer.red())
 
-        self.renderer.draw_string_2d(10, 100, 1, 1, 'X position Error: ' + str(errorp[0]**(1/2)), self.renderer.white())
-        self.renderer.draw_string_2d(10, 130, 1, 1, "Y position Error: " + str(errorp[1]**(1/2)), self.renderer.white())
-        self.renderer.draw_string_2d(10, 160, 1, 1, "Z position Error: " + str(errorp[2]**(1/2)), self.renderer.white())
-        #ball error
-        self.renderer.draw_rect_2d(10,190,int(ballerror[0]), 30, True, self.renderer.red())
-        self.renderer.draw_rect_2d(10,210,int(ballerror[1]), 30, True, self.renderer.red())
-        self.renderer.draw_rect_2d(10,240,int(ballerror[2]), 30, True, self.renderer.red())
+            self.renderer.draw_string_2d(10, 100, 1, 1, 'X position Error: ' + str(self.errorp[0]**(1/2)), self.renderer.white())
+            self.renderer.draw_string_2d(10, 130, 1, 1, "Y position Error: " + str(self.errorp[1]**(1/2)), self.renderer.white())
+            self.renderer.draw_string_2d(10, 160, 1, 1, "Z position Error: " + str(self.errorp[2]**(1/2)), self.renderer.white())
+            #ball error
+            self.renderer.draw_rect_2d(10,190,int(self.ballerror[0]), 30, True, self.renderer.red())
+            self.renderer.draw_rect_2d(10,210,int(self.ballerror[1]), 30, True, self.renderer.red())
+            self.renderer.draw_rect_2d(10,240,int(self.ballerror[2]), 30, True, self.renderer.red())
 
-        self.renderer.draw_string_2d(10, 190, 1, 1, 'X ball Error: ' + str(ballerror[0]), self.renderer.white())
-        self.renderer.draw_string_2d(10, 210, 1, 1, "Y ball Error: " + str(ballerror[1]), self.renderer.white())
-        self.renderer.draw_string_2d(10, 240, 1, 1, "Z ball Error: " + str(ballerror[2]), self.renderer.white())
+            self.renderer.draw_string_2d(10, 190, 1, 1, 'X ball Error: ' + str(self.ballerror[0]), self.renderer.white())
+            self.renderer.draw_string_2d(10, 210, 1, 1, "Y ball Error: " + str(self.ballerror[1]), self.renderer.white())
+            self.renderer.draw_string_2d(10, 240, 1, 1, "Z ball Error: " + str(self.ballerror[2]), self.renderer.white())
 
-        self.renderer.end_rendering()
-
-
-        #printing
-        # print('wx:', self.car.wx, 'wy:', self.car.wy, 'wz:', self.car.wz)
-        return self.controller_state
-
-    def reset(self):
-        game_state = GameState()
-        self.set_game_state(game_state)
-        car_state = CarState(physics(location = Vector3 (x=-1000, y=0, z=250), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(0, 0, 0), angular_velocity=Vector3(0, 0, 0)))
-
-        ball_state = BallState(Physics(location=Vector3(500, 0, None)))
-        game_state = GameState(ball=ball_state, cars={self.index: car_state})
-        self.set_game_state(game_state)
-
-    def setBall(self):
-        ball_state = BallState(Physics(location=Vector3(1000,0,800)))
-        game_state = GameState(ball=ball_state)
-        self.set_game_state(game_state)
-
-    def setCarState(self):
-        game_state = GameState()
-        self.set_game_state(game_state)
-        car_state = CarState(jumped=False, double_jumped=False, boost_amount=100,
-                         physics=Physics(location = Vector3 (x=-1800, y=0, z=550), velocity=Vector3(x=0, y=0, z=0), rotation=Rotator(math.pi / 2, 0, 0), angular_velocity=Vector3(0, 0, 0)))
-
-        ball_state = BallState(Physics(location=Vector3(1000, 0, 800), velocity=Vector3(x=0, y=0, z=0)))
-        game_state = GameState(ball=ball_state, cars={self.index: car_state})
-        self.set_game_state(game_state)
-
-    def plotData(self, data):
-        self.fig1 = plt.figure()
-        self.ax1  = self.fig1.gca()
-        self.ax1.plot(data.d4, data.d3)
-        # self.fig2 = plt.figure()
-        # self.ax2  = self.fig3.gca()
-        # self.ax2.plot(data.d4, data.d2)
-        # self.fig3 = plt.figure()
-        # self.ax3  = self.fig3.gca()
-        # self.ax3.plot(data.d4, data.d3)
-
-        # self.ax1.plot(data.d4, data.d2, 'r')
-        # self.ax1.plot(data.d4, data.d3, 'o')
-        # self.ax2.plot(data.d4, data.d2)
-        # self.ax3.plot(data.d4, data.d3)
-        plt.show()
+            self.renderer.end_rendering()
+        except Exception as e:
+            print ('Exception in rendering:', e)
+            traceback.print_exc()
 
 
 class Vector2:
