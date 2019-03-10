@@ -1,5 +1,6 @@
   #imports for LQR functions
 from __future__ import division, print_function
+import csv
 
 
 import multiprocessing as mp
@@ -14,6 +15,8 @@ from TrajectoryGeneration import Trajectory
 from TrueProportionalNavigation import TPN
 import controller as con
 import State as s
+import DrivingEquations
+import DiscreteDynamicModel as ddm
 # import tensorflow
 # tf.merge_all_summaries = tf.summary.merge_all
 # tf.train.SummaryWriter = tf.summary.FileWriter
@@ -45,6 +48,7 @@ import traceback
 class Test2(BaseAgent):
 
     def initialize_agent(self):
+        self.csv_write_flag = 0
         #This runs once before the bot starts up
         self.packet = None
         self.controller_state = SimpleControllerState()
@@ -76,6 +80,7 @@ class Test2(BaseAgent):
         self.v_now = np.array([0,0,0])
         self.t0 = 0 #Time at initial time step
         self.t1 = 0 #Time at time step tk+1
+        self.t2 = 0
         self.p0 = np.array([0,0,0]) #position vector at initial time
         self.p1 = np.array([0,0,0]) #position vector at tk+1
         self.v0 = np.array([0,0,0]) #velocity at initial time
@@ -89,6 +94,19 @@ class Test2(BaseAgent):
         self.T0 = np.array([0,0,0]) #Torque vector at initial time
         self.T1 = np.array([0,0,0])
 
+        # Controller State at different times
+        self.control_state_t0 = ddm.ControlVariables(SimpleControllerState())
+        self.control_state_t1 = ddm.ControlVariables(SimpleControllerState())
+        self.control_state_t2 = ddm.ControlVariables(SimpleControllerState())
+
+
+        # Model State at different times
+        #     def __init__(self, car, control_variables, coordinate_system, time):
+        self.model_states = list()
+        self.model_state_t0 = None
+        self.model_state_t1 = None
+        self.model_state_t2 = None
+
         self.plotTime0 = None
         self.plotTime1 = None
         self.plotFlag = False
@@ -101,8 +119,11 @@ class Test2(BaseAgent):
         self.t0 = self.t1
         self.t1 = packet.game_info.seconds_elapsed
 
+        # Predict ball
+        self.predict_ball()
+
         #Set car state (forcing to whichever algo i am working on)
-        self.state.set_state(0)
+        self.state.set_state(1)
 
         controller_flight = self.flight_interception()
 
@@ -164,7 +185,7 @@ class Test2(BaseAgent):
         # self.set_game_state(game_state)
 
         #Reset to initial states after counter runs
-        if(self.BallController.counter1 > 800):
+        if(self.BallController.counter1 > 2000):
             self.BallController.release = 0
             self.BallController.counter1 = 0
         else:
@@ -173,8 +194,20 @@ class Test2(BaseAgent):
             game_state = GameState(ball = ball_state_none)
             self.set_game_state(game_state)
 
+
         #Predictions
-        self.prediction()
+        self.predict_car()
+
+        self.model_prediction_controller()
+
+        test_time = packet.game_info.seconds_elapsed
+        control_state_t0 = ddm.ControlVariables(self.controller_state)
+        model_state_t0 = ddm.ModelState(self.car, control_state_t0, self.CoordinateSystems, packet.game_info.seconds_elapsed)
+
+        future_state_t1 = ddm.get_future_state(model_state_t0, 0.1)
+        # print(future_state_t1)
+
+
 
         #RENDERING
         self.render()
@@ -243,11 +276,15 @@ class Test2(BaseAgent):
         self.controller_state.yaw =  -1*max(min(controller.torques.item(2), 1), -1) #changes in rotations about coordinate system cause z axis changes
         self.controller_state.jump = controller.jump
         self.controller_state.throttle = controller.throttle
-        self.controller_state.brake = controller.brake
-        self.controller_state.turn = controller.turn
+        self.controller_state.steer = controller.steer
 
     def ground_interception(self):
         controller = con.Controller()
+        controller.throttle = 0.5
+        controller.steer = 0.75
+        k_min, k_actual = DrivingEquations.get_turning_radius(self.car, controller)
+        # print('k_min', k_min, 'k_actual', k_actual, 'omegaz', self.car.wz, 'vel_mag', np.linalg.norm(self.car.velocity))
+
         return controller
 
     def flight_interception(self):
@@ -305,14 +342,46 @@ class Test2(BaseAgent):
 
         return controller
 
-    def prediction(self):
-        #PREDICTIONS
+    def model_prediction_controller(self):
+        # Car and ball have been released, set model_state_t0 to current state
+        if(self.BallController.release == 0):
+            self.model_states = None
+        if(self.BallController.release == 1):
+            if(self.model_states == None):
+                self.model_states = [ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed)]
+                pass
+            if(len(self.model_states) < 100):
+                print(len(self.model_states))
+                self.model_states.append(ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed))
+            elif(len(self.model_states) == 100 and self.csv_write_flag == 0):
+                print('exporting csv')
+                self.export_model_states_as_csv()
+                self.csv_write_flag = 1
+                # self.model_states.append(ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed))
+                # self.model_states.pop()
+        print(len(self.model_states))
+
+    def export_model_states_as_csv(self):
+        f = open('test_data.csv', 'w', newline = "")
+        writer = csv.writer(f)
+        writer.writerow(['time', 'x', 'y', 'z', 'vx', 'vy', 'vz', 'ax', 'ay', 'az', 'quaternion', 'boost', 'roll', 'pitch', 'yaw'])
+        for i in range(len(self.model_states)):
+            obj = self.model_states[i]
+            row = [obj.time,
+                obj.position_world[0], obj.position_world[1], obj.position_world[2],
+                obj.velocity_world[0], obj.velocity_world[1], obj.velocity_world[2],
+                obj.acceleration_world[0], obj.acceleration_world[1], obj.acceleration_world[2],
+                obj.coordinate_system.Qcar_to_world, obj.control_variables.boost,
+                obj.control_variables.torques[0], obj.control_variables.torques[1], obj.control_variables.torques[2]]
+            writer.writerow(row)
+
+    def predict_car(self):
         #torque coefficients
         T_r = 36.07956616966136; # torque coefficient for roll
         T_p = 12.14599781908070; # torque coefficient for pitch
         T_y =   8.91962804287785; # torque coefficient for yaw
-        #boost vector in car coordinates
-        boostVector = np.array([self.controller_state.boost * 991.666, 0, 0])
+
+        boostVector = np.array([float(self.controller_state.boost) * 991.666, 0, 0])
         #Get values at tk and tk - 1
         self.s_before = self.s_now
         self.s_now = self.ball.position
@@ -332,16 +401,52 @@ class Test2(BaseAgent):
         self.T1 = np.array([self.controller_state.roll * T_r, self.controller_state.pitch * T_p, self.controller_state.yaw * -1 * T_y])
 
         aavg = (self.a1 + self.a0) / 2
-        vavg = (self.v1 + self.v0 / 2)
+        vavg = (self.v1 + self.v0) / 2
+        # def predict(position, velocity, q, omega, a, torques, t0, t1):
         predictedp1, predictedv1 = Predictions.predict(self.p0, self.v0, self.q0, self.w0, aavg, self.T0, self.t0, self.t1)
+        self.errorv = ((predictedv1 - self.v1)*100 / self.v1 )**2
+        self.errorp = ((predictedp1 - self.p1)*100 / self.p1)**2
+
+
+    def predict_ball(self):
+        #PREDICTIONS
+        #torque coefficients
+        T_r = 36.07956616966136; # torque coefficient for roll
+        T_p = 12.14599781908070; # torque coefficient for pitch
+        T_y =   8.91962804287785; # torque coefficient for yaw
+        #boost vector in car coordinates
+        # boostVector = np.array([self.controller_state.boost * 991.666, 0, 0])
+        #Get values at tk and tk - 1
+        self.s_before = self.s_now
+        self.s_now = self.ball.position
+        self.v_before = self.v_now
+        self.v_now = self.ball.velocity
+        # self.p0 = self.p1 #position vector at initial time
+        # self.p1 = self.car.position #position vector at tk+1
+        # self.v0 = self.v1 #velocity at prior frame
+        # self.v1 = self.car.velocity
+        # self.q0 = self.q1 #Orientation at prior frame
+        # self.q1 = self.CoordinateSystems.Qworld_to_car.conjugate.normalised
+        # self.w0 = self.w1 #angular velocity at prior frame
+        # self.w1 = self.car.angular_velocity
+        # self.a0 = self.a1 #accelreation vector at prior frame
+        # self.a1 = self.CoordinateSystems.toWorldCoordinates(boostVector)
+        # self.T0 = self.T1 #Torque vector at prior frame
+        # self.T1 = np.array([self.controller_state.roll * T_r, self.controller_state.pitch * T_p, self.controller_state.yaw * -1 * T_y])
+
+        # aavg = (self.a1 + self.a0) / 2
+        # vavg = (self.v1 + self.v0 / 2)
+        # predictedp1, predictedv1 = Predictions.predict(self.p0, self.v0, self.q0, self.w0, aavg, self.T0, self.t0, self.t1)
         self.ballposition = Predictions.predictBallTrajectory(self.ball, self.t1)
         self.ballerror = Predictions.ballPredictionError(self.s_before, self.s_now, self.v_before, self.v_now, self.t0, self.t1)
         self.ballerror = self.ballerror**(1/2)
-        self.errorv = (predictedv1 - self.v1)**2
-        self.errorp = (predictedp1 - self.p1)**2
+
+        self.time_to_ground, self.s_ground = Predictions.predict_ball_to_ground(self.ball, self.t1)
+        # self.errorv = (predictedv1 - self.v1)**2
+        # self.errorp = (predictedp1 - self.p1)**2
         # print("error^2 v:", errorv, "error^2 p:", errorp)
         # print("z actual:", self.car.z, "z predicted:", predictedp1[2])
-        self.data.add(self.v1[0], predictedv1[0], self.errorv[0], self.t1)
+        # self.data.add(self.v1[0], predictedv1[0], self.errorv[0], self.t1)
 
     def render(self):
         try:
@@ -554,6 +659,13 @@ class Car:
         self.attitude = np.array([0,0,0])
         #MUST CHECK THSESE TO MAKE SURE THEY CORRELATE PROPERLY
 
+        self.is_demolished = False
+        self.has_wheel_contact = True
+        self.is_super_sonic = False
+        self.jumped = False
+        self.boost_left = '100'
+        self.double_jumped = 'False'
+
     def update(self, data):
         #Member variables initialized
         #position
@@ -580,6 +692,13 @@ class Car:
         self.velocity = np.array([self.vx, self.vy, self.vz])
         self.angular_velocity = np.array([self.wx, self.wy, self.wz])
         self.attitude = np.array([self.roll, self.pitch, self.yaw])
+
+        self.is_demolished = data.is_demolished
+        self.has_wheel_contact = data.has_wheel_contact
+        self.is_super_sonic = data.is_super_sonic
+        self.jumped = data.jumped
+        self.boost_left = data.boost
+        self.double_jumped = data.double_jumped
 
     def printVals(self):
         print("x:", int(self.x), "y:", self.y, "z:", self.z, "wx:", self.wx, "wy:", self.wy, "wz:", self.wz)

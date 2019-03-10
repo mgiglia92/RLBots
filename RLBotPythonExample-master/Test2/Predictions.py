@@ -36,10 +36,34 @@ def predict(position, velocity, q, omega, a, torques, t0, t1):
     g = np.array([0,0,-650])
     dt = t1 - t0
     v1 = (a + g)*dt + velocity
-    d1 = (a+g)*(dt**2)
+    d1 = (a+g)*(np.power(dt, 2))
     p1 = ((d1) / 2) + (velocity*dt) + position
 
     return p1, v1
+
+def predict_ball_to_ground(ball, tnow):
+    s = ball.position
+    v = ball.velocity
+    # Define some constants
+    g = np.array([0,0,-650]).transpose()
+    ball_radius = 92.75 # uu
+
+    # Solve the roots equation using the z elements of the vectors
+    poly_z = np.array([-650/2, v[2], s[2] - ball_radius])
+    time_to_ground = np.roots(poly_z)
+
+    # Make sure time to ground is positive
+    if(time_to_ground[0] < 0):
+        t_ground = time_to_ground[1]
+    elif(time_to_ground[1] < 0):
+        t_ground = time_to_ground[0]
+
+    #Use time_to_ground to get full position vector (make sure to use positive value)
+    s_t = (g/2)*(t_ground**2) + (v * t_ground) + s
+
+    # print('s_t', s_t, 'time to ground', t_ground)
+
+    return time_to_ground[1], s_t
 
 def predictBallTrajectory(ball, tnow):
     s = ball.position

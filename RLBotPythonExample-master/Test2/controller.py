@@ -17,5 +17,5 @@ class Controller():
         self.torques = np.array([0.0, 0.0, 0.0])
         self.jump = 0.0
         self.throttle = 0.0
-        self.brake = 0.0
-        self.turn = 0.0
+        self.steer = 0.0
+    
