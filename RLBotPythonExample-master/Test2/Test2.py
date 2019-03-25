@@ -17,6 +17,7 @@ import controller as con
 import State as s
 import DrivingEquations
 import DiscreteDynamicModel as ddm
+import Optimization
 # import tensorflow
 # tf.merge_all_summaries = tf.summary.merge_all
 # tf.train.SummaryWriter = tf.summary.FileWriter
@@ -53,12 +54,13 @@ class Test2(BaseAgent):
         self.packet = None
         self.controller_state = SimpleControllerState()
         self.resetFlag = 0;
-        self.setCarState()
+        # self.setCarState()
         self.car = Car()
         self.fbController = FeedbackController2()
         self.orientationCounter = orientationCounter()
         self.boostCounter = BoostCounter()
         self.boostCounter2 = BoostCounter2()
+        self.boostCounter3 = BoostCounter3()
         self.counter = TestCounter(50, 100)
         self.counter2 = TestCounter(50, 100)
         self.ball = Ball()
@@ -70,6 +72,7 @@ class Test2(BaseAgent):
         self.TPN = TPN()
         self.state = s.State()
         self.controller = con.Controller()
+        self.optimizer = Optimization.Optimizer()
 
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
@@ -111,6 +114,15 @@ class Test2(BaseAgent):
         self.plotTime1 = None
         self.plotFlag = False
 
+        # Optimal control variables
+        self.u_star = None #Optimal control vector from optimization algo
+        self.t_star = None
+        self.ti = None # Initial time value to bias optimal control vector properly
+        self.t_now = None
+        self.optimization_calculated = False
+        self.optimal_control_completed = False
+        self.car_set = False
+
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         #update class data
         self.update_data(packet)
@@ -118,22 +130,43 @@ class Test2(BaseAgent):
         #shift t1 to previous time t0, and set t1 to the new current time
         self.t0 = self.t1
         self.t1 = packet.game_info.seconds_elapsed
+        self.t_now = packet.game_info.seconds_elapsed
+
+        # Get inital time we start controlling the car
+        if((self.ti == None) and (self.optimization_calculated == True)):
+            self.ti = packet.game_info.seconds_elapsed
 
         # Predict ball
         self.predict_ball()
 
+        # Set optimizer values for optimal control algo
+        s_ti = 500
+        v_ti = 00
+        s_tf = 500
+        v_tf = 00
+
+        # Derive optimal control vector
+        if(self.optimization_calculated == False):
+            self.u_star, self.t_star = self.optimizer.optimize(s_ti, s_tf, v_ti, v_tf)
+            self.optimization_calculated = True
+
+
         #Set car state (forcing to whichever algo i am working on)
-        self.state.set_state(1)
+        self.state.set_state(4)
 
         controller_flight = self.flight_interception()
 
         controller_ground = self.ground_interception()
+
+        controller_optimize = self.get_current_u_star(self.ti, self.t_now)
 
         #Set the controller state depending on which state the car is in
         if(self.state.current_state == 0): #Car is in driving state
             self.setControllerState(controller_ground)
         if(self.state.current_state == 1):
             self.setControllerState(controller_flight)
+        if(self.state.current_state == 4):
+            self.setControllerState(controller_optimize)
 
         #Control ball for testing functionss
         x, y, z, vi = self.BallController.bounce(500,500,300,1500)
@@ -164,6 +197,8 @@ class Test2(BaseAgent):
         car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
         car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
                          physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
+        car_state_optimizer_test = CarState(jumped=True, double_jumped=False,
+                         physics=Physics(location = Vector3(0, 00, s_ti), velocity = Vector3(0,0,v_ti), rotation = Rotator(pitch = math.pi/2, yaw = 0, roll = 0)))
         # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
 
@@ -172,46 +207,56 @@ class Test2(BaseAgent):
         #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
 
 
-        if(self.BallController.release == 0):
-            # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-            game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
-            self.set_game_state(game_state)
-        # else:
-        #
-        #     # game_state = GameState(cars = {self.index: car_state_hold})
-        #     game_state = GameState(ball = ball_state_linear)
+        # if(self.BallController.release == 0):
         #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
+        #     game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
+        #     self.set_game_state(game_state)
+        # # else:
+        # #
+        # #     # game_state = GameState(cars = {self.index: car_state_hold})
+        # #     game_state = GameState(ball = ball_state_linear)
+        # #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
+        # #
+        # # self.set_game_state(game_state)
         #
-        # self.set_game_state(game_state)
+        # #Reset to initial states after counter runs
+        # if(self.BallController.counter1 > 2000):
+        #     self.BallController.release = 0
+        #     self.BallController.counter1 = 0
+        # else:
+        #     # game_state = GameState(ball = ball_state, cars = {self.index: car_stateHoldPosition})
+        #     # game_state = GameState(cars = {self.index: car_state_falling})
+        #     game_state = GameState(ball = ball_state_none)
+        #     self.set_game_state(game_state)
 
-        #Reset to initial states after counter runs
-        if(self.BallController.counter1 > 2000):
-            self.BallController.release = 0
-            self.BallController.counter1 = 0
-        else:
-            # game_state = GameState(ball = ball_state, cars = {self.index: car_stateHoldPosition})
-            # game_state = GameState(cars = {self.index: car_state_falling})
-            game_state = GameState(ball = ball_state_none)
+        # If optimizer has not completed, keep car at initial conditions
+        if(self.optimization_calculated == False or self.car_set == False):
+            game_state = GameState(cars = {self.index: car_state_optimizer_test})
             self.set_game_state(game_state)
-
+            self.car_set = True
+            print('set the car')
+        # else: # Else let contorller control car
+        #     game_state = GameState(ball = ball_state_none)
+        #     self.set_game_state(game_state)
 
         #Predictions
-        self.predict_car()
-
-        self.model_prediction_controller()
-
-        test_time = packet.game_info.seconds_elapsed
-        control_state_t0 = ddm.ControlVariables(self.controller_state)
-        model_state_t0 = ddm.ModelState(self.car, control_state_t0, self.CoordinateSystems, packet.game_info.seconds_elapsed)
-
-        future_state_t1 = ddm.get_future_state(model_state_t0, 0.1)
+        # self.predict_car()
+        #
+        # self.model_prediction_controller()
+        #
+        # test_time = packet.game_info.seconds_elapsed
+        # control_state_t0 = ddm.ControlVariables(self.controller_state)
+        # model_state_t0 = ddm.ModelState(self.car, control_state_t0, self.CoordinateSystems, packet.game_info.seconds_elapsed)
+        #
+        # future_state_t1 = ddm.get_future_state(model_state_t0, 0.1)
         # print(future_state_t1)
 
 
 
         #RENDERING
-        self.render()
+        # self.render()
 
+        print(self.car.position)
         return self.controller_state
 
     def reset(self):
@@ -263,13 +308,46 @@ class Test2(BaseAgent):
         # self.ax3.plot(data.d4, data.d3)
         plt.show()
 
+    def get_current_u_star(self, ti, tf):
+        #Get the current thrust value from the optimal control vector, dependent on what the current time is
+        controller = con.Controller()
+
+        if(ti != None):
+            if((tf - ti) > self.optimizer.m.time[-1]):
+                print('optimizer done')
+                controller.boostPercent = 0.0
+                return controller
+            t = tf - ti
+
+            # Search time array for the index of the closest value
+            idx = np.searchsorted(self.t_star, t, side="left")
+            if (idx > 0) and (idx == len(self.t_star) or math.fabs(t - self.t_star[idx-1]) < math.fabs(t - self.t_star[idx])):
+                index = idx-1
+            else:
+                index = idx
+
+            u_current = self.u_star[index]
+            # print('u_current:', u_current)
+
+            # get bboost percent
+            boostPercent = u_current / 991.666 * 100
+            boostPercent = max(min(boostPercent, 100), 0)
+
+            #Set controller values
+            controller.boostPercent = u_current
+
+        else:
+            controller.boostPercent = 0
+
+        return controller
+
     def state_controller(self):
         #Do algorithm to determine what state the car should be in
         None
 
     def setControllerState(self, controller):
         # self.controller_state.boost = self.boostCounter.boost(boostPercent)
-        self.controller_state.boost = self.boostCounter2.boost(controller.boostPercent)
+        self.controller_state.boost = self.boostCounter.boost(controller.boostPercent)
         # #roll, pitch, yaw values
         self.controller_state.pitch = max(min(controller.torques.item(1), 1), -1)
         self.controller_state.roll = max(min(controller.torques.item(0), 1), -1)
@@ -1024,13 +1102,16 @@ class BoostCounter: #
 
     def boost(self, desiredBoostPercentage):
         #print(desiredBoostPercentage)
+        desiredBoostPercentage = clamp(desiredBoostPercentage, 0.0, 100.0)
+        if(desiredBoostPercentage == 0):
+            return 0
         if(self.counter >= self.max): #If counter is at max make sure to make it zero before sending boost confimation
             if((self.counter / self.max) > (desiredBoostPercentage / 100.0)):
                 self.counter = 0
                 return 0
             else:
                 self.counter = 0
-                return 1
+                return 0
         if((self.counter / self.max) > (desiredBoostPercentage / 100.0)):
             #Turn on boost
             self.counter = self.counter + 1
@@ -1050,6 +1131,23 @@ class BoostCounter2:
         use_boost = 0.0
         use_boost -= round(self.boost_counter)
         self.boost_counter += (boostPercentage) / self.B_max
+        use_boost += round(self.boost_counter)
+
+        #print(self.boost_counter, boostPercentage, use_boost)
+        if(use_boost):
+            return 1
+        else:
+            return 0
+
+class BoostCounter3:
+    def __init__(self):
+        self.boost_counter = 0.0
+        self.B_max = 1000.0
+
+    def boost(self, avgAcceleration):
+        use_boost = 0.0
+        use_boost -= round(self.boost_counter)
+        self.boost_counter += (avgAcceleration) / self.B_max
         use_boost += round(self.boost_counter)
 
         #print(self.boost_counter, boostPercentage, use_boost)
