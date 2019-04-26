@@ -45,7 +45,6 @@ import numpy as np
 import scipy.linalg
 
 import traceback
-import copy
 
 class Test2(BaseAgent):
 
@@ -55,7 +54,7 @@ class Test2(BaseAgent):
         self.packet = None
         self.controller_state = SimpleControllerState()
         self.resetFlag = 0;
-        self.setCarState()
+        # self.setCarState()
         self.car = Car()
         self.fbController = FeedbackController2()
         self.orientationCounter = orientationCounter()
@@ -74,9 +73,6 @@ class Test2(BaseAgent):
         self.state = s.State()
         self.controller = con.Controller()
         self.optimizer = Optimization.Optimizer()
-
-        # Start optimization thread
-        self.optimizer.MPC_thread.start()
 
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
@@ -126,47 +122,6 @@ class Test2(BaseAgent):
         self.optimization_calculated = False
         self.optimal_control_completed = False
         self.car_set = False
-        self.completed_optimal_trajectory = False
-
-        # Set optimizer values for optimal control algo for car
-        self.s_ti = [2200.0, 100.0]
-        self.v_ti = [-50.0, 50.0]
-        self.s_tf = [-2200.0, 1200.0]
-        self.v_tf = [-500.00, 200.0]
-        self.r_ti = math.pi/2 # inital orientation of the car
-        self.omega_ti = 0.0 # initial angular velocity of car
-
-        # Set ball initial conditions
-        self.ball_si = [-1200.0, 400.0]
-        self.ball_vi = [1200.0, 1200.0]
-
-        # Ball and car states that you can call for controlling environement
-        #Set ball and car states to set game state for testing
-        # self.ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
-        # self.ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
-        self.ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
-        # self.ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
-        self.ball_state_high = BallState(Physics(location=Vector3(500, 0, 1800), velocity = Vector3(0, 0, 300)))
-        self.ball_state_none = BallState()
-        self.ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
-        self.ball_state_optimizer_test = BallState(physics = Physics(location=Vector3(self.ball_si[0], 0, self.ball_si[1]), velocity = Vector3(self.ball_vi[0], 0, self.ball_vi[1])))
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
-        self.car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 200), rotation = Rotator(pitch = math.pi/8, yaw = math.pi/2, roll = 0), angular_velocity = Vector3(0,0,0)))
-        self.car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
-                         physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
-        self.car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
-        self.car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
-                         physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
-        self.car_state_optimizer_test = CarState(jumped=True, double_jumped=False,
-                         physics=Physics(location = Vector3(self.s_ti[0], 0, self.s_ti[1]), velocity = Vector3(self.v_ti[0],0,self.v_ti[1]), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
-        # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
-
-        #Pointed down car state for maximum initial error
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-        #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         #update class data
@@ -174,30 +129,35 @@ class Test2(BaseAgent):
 
         #shift t1 to previous time t0, and set t1 to the new current time
         self.t0 = self.t1
-        self.t1 = copy.deepcopy(packet.game_info.seconds_elapsed)
-        self.t_now = copy.deepcopy(packet.game_info.seconds_elapsed)
-
+        self.t1 = packet.game_info.seconds_elapsed
+        self.t_now = packet.game_info.seconds_elapsed
 
         # Get inital time we start controlling the car
         if((self.ti == None) and (self.optimization_calculated == True)):
-            self.ti = copy.deepcopy(packet.game_info.seconds_elapsed)
+            self.ti = packet.game_info.seconds_elapsed
+
         # Predict ball
-        # self.predict_ball()
+        self.predict_ball()
+
+        # Set optimizer values for optimal control algo
+        s_ti = 500
+        v_ti = 00
+        s_tf = 500
+        v_tf = 00
 
         # Derive optimal control vector
         if(self.optimization_calculated == False):
-            self.u_thrust_star, self.u_pitch_star, self.t_star, self.sx_star, self.sz_star, self.ball_sx, self.ball_sz, self.ball_vz, self.pitch_star = self.optimizer.optimize2D(self.s_ti, self.s_tf, self.v_ti, self.v_tf, self.r_ti, self.omega_ti, self.ball_si, self.ball_vi)
-            self.optimization_calculated = True # Let environment handler know optimizer completed
-            return self.controller_state
+            self.u_star, self.t_star = self.optimizer.optimize(s_ti, s_tf, v_ti, v_tf)
+            self.optimization_calculated = True
 
 
         #Set car state (forcing to whichever algo i am working on)
-        self.state.set_state(4) # 4 is optimization algorithm
+        self.state.set_state(4)
 
-        # controller_flight = self.flight_interception()
+        controller_flight = self.flight_interception()
 
         controller_ground = self.ground_interception()
-        print('delta_t: ', (self.t_now - self.ti), 'ball position', self.ball.position, 'car pos', self.car.position)
+
         controller_optimize = self.get_current_u_star(self.ti, self.t_now)
 
         #Set the controller state depending on which state the car is in
@@ -205,20 +165,46 @@ class Test2(BaseAgent):
             self.setControllerState(controller_ground)
         if(self.state.current_state == 1):
             self.setControllerState(controller_flight)
-        if(self.state.current_state == 4): # Use controller optimization vector
+        if(self.state.current_state == 4):
             self.setControllerState(controller_optimize)
 
         #Control ball for testing functionss
-        # x, y, z, vi = self.BallController.bounce(500,500,300,1500)
-        # Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
-        # p = np.array([00, 1500, 100])
-        # v = np.array([-600, -500, 1500])
-        # ballpos, ballvel = self.BallController.projectileMotion(p, v)
-        # # vx = self.BallController.oscillateX(-1500, 0, 1000)
-        # vx = Vt.item(0)
-        # vy = Vt.item(1)
-        # # vz = 0
+        x, y, z, vi = self.BallController.bounce(500,500,300,1500)
+        Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
+        p = np.array([00, 1500, 100])
+        v = np.array([-600, -500, 1500])
+        ballpos, ballvel = self.BallController.projectileMotion(p, v)
+        # vx = self.BallController.oscillateX(-1500, 0, 1000)
+        vx = Vt.item(0)
+        vy = Vt.item(1)
+        # vz = 0
 
+        #Set ball and car states to set game state for testing
+        ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
+        ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
+        ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
+        ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
+        ball_state_high = BallState(Physics(location=Vector3(0, 0, 1200), velocity = Vector3(0, 0, 300)))
+        ball_state_none = BallState()
+        ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
+
+        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
+        #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
+        car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
+                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 200), rotation = Rotator(pitch = math.pi/8, yaw = math.pi/2, roll = 0), angular_velocity = Vector3(0,0,0)))
+        car_state_hold = CarState(jumped=True, double_jumped=False, boost_amount=1,
+                         physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
+        car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
+        car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
+                         physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
+        car_state_optimizer_test = CarState(jumped=True, double_jumped=False,
+                         physics=Physics(location = Vector3(0, 00, s_ti), velocity = Vector3(0,0,v_ti), rotation = Rotator(pitch = math.pi/2, yaw = 0, roll = 0)))
+        # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
+        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
+
+        #Pointed down car state for maximum initial error
+        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
+        #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
 
 
         # if(self.BallController.release == 0):
@@ -243,25 +229,20 @@ class Test2(BaseAgent):
         #     game_state = GameState(ball = ball_state_none)
         #     self.set_game_state(game_state)
 
-
-        # ENVIRONMENT HANDLER (this should probably be a class)
         # If optimizer has not completed, keep car at initial conditions
-
-        if(self.optimization_calculated == False or self.car_set == False or self.ti == None):
-            game_state = GameState(cars = {self.index: self.car_state_optimizer_test}, ball = self.ball_state_optimizer_test)
+        if(self.optimization_calculated == False or self.car_set == False):
+            game_state = GameState(cars = {self.index: car_state_optimizer_test})
             self.set_game_state(game_state)
             self.car_set = True
-            # print('set the car')
-        else: # Else let contorller control car, and don't control ball
-            game_state = GameState(ball =self.ball_state_none)
-            self.set_game_state(game_state)
+            print('set the car')
+        # else: # Else let contorller control car
+        #     game_state = GameState(ball = ball_state_none)
+        #     self.set_game_state(game_state)
 
-        # game_state = GameState(ball =self.ball_state_none)
-        # self.set_game_state(game_state)
         #Predictions
         # self.predict_car()
         #
-        # self.save_trajectory_data()
+        # self.model_prediction_controller()
         #
         # test_time = packet.game_info.seconds_elapsed
         # control_state_t0 = ddm.ControlVariables(self.controller_state)
@@ -275,7 +256,7 @@ class Test2(BaseAgent):
         #RENDERING
         # self.render()
 
-        # print(self.ball.position)
+        print(self.car.position)
         return self.controller_state
 
     def reset(self):
@@ -332,39 +313,31 @@ class Test2(BaseAgent):
         controller = con.Controller()
 
         if(ti != None):
-            if((tf - ti) > self.optimizer.ts[-1]):
-                print('completed optimal trajectory')
-                self.completed_optimal_trajectory = True
+            if((tf - ti) > self.optimizer.m.time[-1]):
+                print('optimizer done')
                 controller.boostPercent = 0.0
                 return controller
-            t = (tf - ti)# - 1/60
+            t = tf - ti
 
             # Search time array for the index of the closest value
-            idx = np.searchsorted(self.t_star, t, side="right")
+            idx = np.searchsorted(self.t_star, t, side="left")
             if (idx > 0) and (idx == len(self.t_star) or math.fabs(t - self.t_star[idx-1]) < math.fabs(t - self.t_star[idx])):
                 index = idx-1
             else:
                 index = idx
 
-            # u_thrust_current = self.u_thrust_star[index]
-            # u_pitch_current = self.u_pitch_star[index]
-            u_thrust_current = self.u_thrust_star[idx]
-            u_pitch_current = self.u_pitch_star[idx]
-            # u_pitch_current = (tf - self.t_star[index]) * (self.u_pitch_star[index + 1] - self.u_pitch_star[index]) / (self.t_star[index+1] - self.t_star[index])
+            u_current = self.u_star[index]
+            # print('u_current:', u_current)
 
-
-            # print('u thrust current:', u_thrust_current, 'u pitch:', u_pitch_current, 'time', t)
             # get bboost percent
-            # boostPercent = u_thrust_current / (991.666 + 60) * 100
-            # boostPercent = max(min(boostPercent, 100), 0)
+            boostPercent = u_current / 991.666 * 100
+            boostPercent = max(min(boostPercent, 100), 0)
 
             #Set controller values
-            controller.boostPercent = u_thrust_current
-            controller.torques = np.array([0, u_pitch_current, 0])
+            controller.boostPercent = u_current
 
         else:
             controller.boostPercent = 0
-            controller.torques = np.array([0, 0, 0])
 
         return controller
 
@@ -374,8 +347,7 @@ class Test2(BaseAgent):
 
     def setControllerState(self, controller):
         # self.controller_state.boost = self.boostCounter.boost(boostPercent)
-        # self.controller_state.boost = self.boostCounter.boost(controller.boostPercent)
-        self.controller_state.boost = controller.boostPercent
+        self.controller_state.boost = self.boostCounter.boost(controller.boostPercent)
         # #roll, pitch, yaw values
         self.controller_state.pitch = max(min(controller.torques.item(1), 1), -1)
         self.controller_state.roll = max(min(controller.torques.item(0), 1), -1)
@@ -419,7 +391,7 @@ class Test2(BaseAgent):
         # TotalAcceleration = -gravity
         Acc_unit = TotalAcceleration / np.linalg.norm(TotalAcceleration)
         TotalAccelerationMag = np.linalg.norm(TotalAcceleration)
-        boostPercent = TotalAccelerationMag / (991.666 + 60) * 100
+        boostPercent = TotalAccelerationMag / 991.666 * 100
         boostPercent = max(min(boostPercent, 100), 0)
 
         # Qdesired = self.CoordinateSystems.createQuaternion_world_at_car(unit_to_ball)
@@ -448,51 +420,38 @@ class Test2(BaseAgent):
 
         return controller
 
-    def save_trajectory_data(self):
+    def model_prediction_controller(self):
         # Car and ball have been released, set model_state_t0 to current state
-        if(self.car_set == False):
+        if(self.BallController.release == 0):
             self.model_states = None
-        if(self.car_set == True):
+        if(self.BallController.release == 1):
             if(self.model_states == None):
-                self.model_states = [ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed, self.ball)]
-                print(self.packet.game_ball)
+                self.model_states = [ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed)]
                 pass
-            if(self.ti != None and self.completed_optimal_trajectory == False):
-                # print('model state length', len(self.model_states))
-                self.model_states.append(ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed, self.ball))
-            elif(self.completed_optimal_trajectory == True and self.csv_write_flag == False):
+            if(len(self.model_states) < 100):
+                print(len(self.model_states))
+                self.model_states.append(ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed))
+            elif(len(self.model_states) == 100 and self.csv_write_flag == 0):
                 print('exporting csv')
                 self.export_model_states_as_csv()
                 self.csv_write_flag = 1
                 # self.model_states.append(ddm.ModelState(self.car, ddm.ControlVariables(self.controller_state), self.CoordinateSystems, self.packet.game_info.seconds_elapsed))
                 # self.model_states.pop()
-        # print(len(self.model_states))
+        print(len(self.model_states))
 
     def export_model_states_as_csv(self):
         f = open('test_data.csv', 'w', newline = "")
         writer = csv.writer(f)
-        writer.writerow(['ti', 'time', 'x', 'y', 'z', 'vx', 'vy', 'vz', 'ax', 'ay', 'az', 'quaternion', 'boost', 'u roll', 'u pitch', 'u yaw', 'theta roll', 'theta pitch', 'theta yaw', 'wx', 'wy', 'wz', 'ball sx', 'ball sy', 'ball sz', 'ball vx', 'ball vy', 'ball vz'])
+        writer.writerow(['time', 'x', 'y', 'z', 'vx', 'vy', 'vz', 'ax', 'ay', 'az', 'quaternion', 'boost', 'roll', 'pitch', 'yaw'])
         for i in range(len(self.model_states)):
             obj = self.model_states[i]
-            row = [self.ti, obj.time,
+            row = [obj.time,
                 obj.position_world[0], obj.position_world[1], obj.position_world[2],
                 obj.velocity_world[0], obj.velocity_world[1], obj.velocity_world[2],
                 obj.acceleration_world[0], obj.acceleration_world[1], obj.acceleration_world[2],
                 obj.coordinate_system.Qcar_to_world, obj.control_variables.boost,
-                obj.control_variables.torques[0], obj.control_variables.torques[1], obj.control_variables.torques[2],
-                obj.attitude[0],obj.attitude[1],obj.attitude[2],
-                obj.angular_velocity[0],obj.angular_velocity[1],obj.angular_velocity[2],
-                obj.ball_position[0],obj.ball_position[1], obj.ball_position[2],
-                obj.ball_velocity[0], obj.ball_velocity[1], obj.ball_velocity[2]]
+                obj.control_variables.torques[0], obj.control_variables.torques[1], obj.control_variables.torques[2]]
             writer.writerow(row)
-
-        f = open('optimization_data.csv', 'w', newline = "")
-        writer = csv.writer(f)
-        writer.writerow(['time', 'sx', 'sz', 'ball sx', 'ball sz', 'opt ball vz', 'opt pitch']) # , 'vx', 'vy', 'vz', 'ax', 'ay', 'az', 'quaternion', 'boost', 'roll', 'pitch', 'yaw'])
-        for i in range(len(self.t_star)):
-            row = [self.t_star[i], self.sx_star.value[i], self.sz_star.value[i], self.ball_sx.value[i], self.ball_sz.value[i], self.ball_vz.value[i], self.pitch_star.value[i]]
-            writer.writerow(row)
-            print('wrote row', row)
 
     def predict_car(self):
         #torque coefficients
@@ -500,7 +459,7 @@ class Test2(BaseAgent):
         T_p = 12.14599781908070; # torque coefficient for pitch
         T_y =   8.91962804287785; # torque coefficient for yaw
 
-        boostVector = np.array([float(self.controller_state.boost) * (991.666 + 60), 0, 0])
+        boostVector = np.array([float(self.controller_state.boost) * 991.666, 0, 0])
         #Get values at tk and tk - 1
         self.s_before = self.s_now
         self.s_now = self.ball.position
@@ -1104,7 +1063,7 @@ class FeedbackController3: #This is the controller algorithm possibly full state
 
         #Convert desired thrust and torque to percent thrust
         acc = self.thrust/self.m
-        self.boostPercent = (self.thrust/(991.666 + 60)) * 100
+        self.boostPercent = (self.thrust/991.666) * 100
         self.boostPercent = max(min(self.boostPercent, 100), 0)
         self.pitchPercent = (self.torque/12.46)
         self.pitchPercent =  max(min(self.pitchPercent, 1), -1)

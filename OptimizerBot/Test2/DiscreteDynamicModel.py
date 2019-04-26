@@ -42,12 +42,11 @@ import numpy as np
 import scipy.linalg
 
 import traceback
-import copy
 
 
 # Discrete time car prediction model for MPC optimization function
 class ModelState():
-    def __init__(self, car, control_variables, coordinate_system, time, ball):
+    def __init__(self, car, control_variables, coordinate_system, time):
         # Car _packet should be the game_car packet not the entire packet for the game
 
         # Coordinate system instance at this time
@@ -61,11 +60,6 @@ class ModelState():
         # Values in world reference coordinate system
         self.position_world = car.position
         self.velocity_world = car.velocity
-        self.attitude = car.attitude
-        self.angular_velocity = car.angular_velocity
-
-        self.ball_position = ball.position
-        self.ball_velocity = ball.velocity
 
         # Convert local acceleration to world acceleration on car
         self.acceleration_world = coordinate_system.toWorldCoordinates(self.acceleration_car)
@@ -83,7 +77,7 @@ class ModelState():
 
         self.time = time
 
-    def update(self, car, control_variables, coordinate_system, time, ball):
+    def update(self, car, control_variables, coordinate_system, time):
         # Car _packet should be the game_car packet not the entire packet for the game
 
         # Coordinate system instance at this time
@@ -97,8 +91,6 @@ class ModelState():
         # Values in world reference coordinate system
         self.position_world = car.position
         self.velocity_world = car.velocity
-
-        self.ball = ball
 
         # Convert local acceleration to world acceleration on car
         self.acceleration_world = coordinate_system.toWorldCoordinates(self.acceleration_car)

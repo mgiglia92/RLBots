@@ -12,12 +12,12 @@ from gekko import GEKKO
 class Optimizer():
     def __init__(self):
         self.m = GEKKO()
-        nt = 21
-        self.m.time = np.linspace(0, 3, nt)
+        nt = 101
+        self.m.time = np.linspace(0, 5, nt)
 
         # options
         self.m.options.NODES = 100
-        self.m.options.SOLVER = 1
+        self.m.options.SOLVER = 3
         self.m.options.IMODE = 6 # MPC mode
         # m.options.IMODE = 9 #dynamic ode sequential
         self.m.options.MAX_ITER = 500
@@ -35,7 +35,7 @@ class Optimizer():
         # v_end = 500
 
         # force (thruster)
-        self.u = self.m.MV(integer=True,lb=0,ub=1)
+        self.u = self.m.MV(value=900,lb=0,ub=991.666)
         self.u.STATUS = 1
         self.u.DCOST = 1e-5
 
@@ -57,8 +57,7 @@ class Optimizer():
 
         # differential equations
         self.m.Equation(self.s.dt()==self.v)
-        # self.m.Equation(self.v.dt()==((self.u*991.666) - self.g))
-        self.m.Equation(self.v.dt()==((self.u*(991.666+60)) - self.g)) #testing different acceleration value that i get from data
+        self.m.Equation(self.v.dt()==(self.u - self.g))
 
         #Set constraints
         # specify endpoint conditions
