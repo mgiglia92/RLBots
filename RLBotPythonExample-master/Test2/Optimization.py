@@ -9,6 +9,8 @@ from gekko import GEKKO
 import time
 import threading
 import traceback
+import copy
+import controller as con
 
 class Optimizer():
     def __init__(self):
@@ -19,9 +21,19 @@ class Optimizer():
         # Create thread parameters
         self.MPC_thread = threading.Thread(target=self.run, args=(), daemon=True)
 
+        # Thread stop variables
+        self.stop = False
+        self.trigger = False
+        self.ready = False
+        self.go = False
+
         # Current Game state data
+        self.currentTime = None
         self.currentBall = None
         self.currentCar = None
+
+        # Controller state to pass into get_output function
+        self.controllerState = con.Controller()
 
         # Optimal Control data updated by thread
         self.u_pitch_star = 0.0
@@ -32,9 +44,13 @@ class Optimizer():
 
 
     def initialize_optimization(self):
-        self.m = GEKKO(remote=False)
+
+################# AIRBORNE OPTIMIZER SETTINGS################
+        self.m = GEKKO(remote=False) # Airborne optimzer
+
         nt = 11
         self.m.time = np.linspace(0, 1, nt)
+
 
         # options
         # self.m.options.NODES = 3
@@ -86,6 +102,101 @@ class Optimizer():
         self.p = np.zeros(nt)
         self.p[-1] = 1.0
         self.final = self.m.Param(value = self.p)
+
+
+#################GROUND DRIVING OPTIMIZER SETTTINGS##############
+        self.d = GEKKO(remote=False) # Driving on ground optimizer
+
+        ntd = 11
+        self.d.time = np.linspace(0, 1, ntd) # Time vector normalized 0-1
+
+        # options
+        # self.d.options.NODES = 3
+        self.d.options.SOLVER = 3
+        self.d.options.IMODE = 6# MPC mode
+        # m.options.IMODE = 9 #dynamic ode sequential
+        self.d.options.MAX_ITER = 200
+        self.d.options.MV_TYPE = 0
+        self.d.options.DIAGLEVEL = 0
+
+        # final time for driving optimizer
+        self.tf_d = self.d.FV(value=1.0,lb=0.1,ub=100.0)
+
+        # allow gekko to change the tfd value
+        self.tf_d.STATUS = 1
+
+        # Scaled time for Rocket league to get proper time
+
+
+        # Boost variable, its integer type since it can only be on or off
+        self.u_thrust_d = self.d.MV(value=0,lb=0,ub=1, integer=True) #Manipulated variable integer type
+        self.u_thrust_d.STATUS = 0
+        self.u_thrust_d.DCOST = 1e-5
+
+        # Throttle value, this can vary smoothly between 0-1
+        self.u_throttle_d = self.d.MV(value = 1, lb = 0.02, ub = 1)
+        self.u_throttle_d.STATUS = 1
+        self.u_throttle_d.DCOST = 1e-5
+
+        # Turning input value also smooth
+        self.u_turning_d = self.d.MV(value = 0, lb = -1, ub = 1)
+        self.u_turning_d.STATUS = 1
+        self.u_turning_d.DCOST = 1e-5
+
+        # end time variables to multiply u2 by to get total value of integral
+        self.p_d = np.zeros(ntd)
+        self.p_d[-1] = 1.0
+        self.final_d = self.d.Param(value = self.p_d)
+
+    def optimizeDriving(self, car, car_desired):
+
+        # Desired positions
+        self.x_desired = self.d.Var(value = car_desired.x)
+        self.y_desired = self.d.Var(value = car_desired.y)
+
+        # Positions of driving plane
+        self.sx_d = self.d.Var(value = car.x)
+        self.sy_d = self.d.Var(value = car.y)
+        self.yaw = self.d.Var(value = car.yaw)
+
+        # Velocities of driving plane
+        self.vx_d = self.d.Var(value = car.vx)
+        self.vy_d = self.d.Var(value = car.vy)
+        self.v_mag = self.d.Intermediate(self.d.sqrt((self.vx_d**2) + (self.vy_d**2)))
+
+        # Curvature of turn dependant on velocity magnitude
+        self.curvature = self.d.Intermediate(0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*self.v_mag**2) - ((1.48e-12) * self.v_mag**3) + ((2.37e-16) * self.v_mag**4))
+
+
+        # Heading unit vector from yaw
+        self.heading_x = self.d.Intermediate(self.d.cos(self.yaw))
+        self.heading_y = self.d.Intermediate(self.d.sin(self.yaw))
+        # Velocity direction unit vector
+        self.vx_direction = self.d.Intermediate(self.vx_d/self.v_mag)
+        self.vy_direction = self.d.Intermediate(self.vy_d/self.v_mag)
+        # Direction car is moving relative to heading vector, this will help determine what the throttle value will do in the current state
+        self.v_relative = self.d.Intermediate((self.heading_x*self.vx_direction) + (self.heading_y*self.vy_direction))
+        self.throttle_relative = self.d.Intermediate(self.v_relative * self.u_throttle_d)
+
+        self.acceleration = self.d.Intermediate(self.u_throttle_d * (-1600.0/1410.0) * self.v_mag)
+
+        # Differental equations
+        self.d.Equation(self.sx_d.dt()==self.tf_d * self.vx_d)
+        self.d.Equation(self.sy_d.dt()==self.tf_d *self.vy_d)
+        self.d.Equation(self.vx_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.cos(self.yaw)))
+        self.d.Equation(self.vy_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.sin(self.yaw)))
+        self.d.Equation(self.yaw.dt()==self.tf_d *(self.u_turning_d * (self.curvature) * self.v_mag))
+
+        self.d.Equation(self.x_desired.dt() == 0)
+        self.d.Equation(self.y_desired.dt() == 0)
+
+        self.d.Obj(self.final_d * 1e4 * (self.sx_d - self.x_desired)**2)
+        self.d.Obj(self.final_d * 1e4 * (self.sy_d - self.y_desired)**2)
+        self.d.Obj(self.tf_d * 1e3)
+
+        self.d.solve()
+        self.ts_d = np.multiply(self.d.time, self.tf_d.value[0])
+        return self.ts_d
 
     def optimize2D(self, si, sf, vi, vf, ri, omegai, ball_si, ball_vi): #these are 1x2 vectors s or v [x, z]
         #NOTE: I should make some data structures to easily pass this data around as one variable instead of so many variables
@@ -244,7 +355,7 @@ class Optimizer():
 
         # Objective funciton to hit with a particular velocity
         # self.m.Obj(self.final*1e3*(self.vz/)**2)
-        self.m.Obj(self.final*1e4*(self.vx + 1000)**2)
+        # self.m.Obj(self.final*1e4*(self.vx + 1000)**2)
         #Objective function to minimize time
         self.m.Obj(self.tf * 1e3)
 
@@ -271,55 +382,47 @@ class Optimizer():
         # print('time', np.multiply(self.m.time, self.tf.value[0]))
         # time.sleep(3)
 
-        self.ts = np.multiply(self.m.time, self.tf.value[0])
-        print('ts', self.ts)
-        print('ustar', self.u_pitch.value)
+        # self.ts = np.multiply(self.m.time, self.tf.value[0])
+        # print('ts', self.ts)
+        # print('ustar', self.u_pitch.value)
         # time.sleep(0.10)
         return self.u_thrust, self.u_pitch#, self.ts, self.sx, self.sz, self.ball_sx, self.ball_sz, self.ball_vz, self.pitch
 
 
 
     def run(self):
-        print('yay thread is running')
-        try:
-            if(self.current_packet != None):
-                while(1):
-                    try:
-                        # Lock variable to allow reading
-                        self.lock.acquire()
 
-                        # Copy data locally
-                        ball = copy.deepycopy(self.currentBall)
-                        car = copy.deepcopy(self.currentCar)
+        while(self.stop == False):
+            # time.sleep(0.1)
+            try:
+                print('thread here, hi')
+                if(self.currentCar != None and self.currentBall != None):
+                    while(1):
+                        try:
+                            self.ready = True # Flag variable to tell the get_output function to not write to data right now
 
-                        # Unlock variable to allow writing
-                        self.lock.release()
-                        break
-                    except Exception as e:
-                        print('Exception when locking to read from current data', e)
+                            if(self.go == True):
+                                ball = copy.deepcopy(self.currentBall)
+                                car = copy.deepcopy(self.currentCar)
+                                print('ball pos', ball.position, 'car pos', car.position)
+                                # Unlock variable to allow writing
+                                # self.lock.release()
 
-                # Run optimization function
-                u, u_pitch = self.MPC_optimize(car, ball)
+                                # Run optimization function
+                                if(self.trigger == True):
+                                    u, u_pitch = self.MPC_optimize(car, ball)
+                                    self.controllerState.boostPercent = u.value[0]
+                                    self.controllerState.torques = np.array([0,u_pitch.value[0], 0])
 
-                while(1):
-                    try:
-                        # Lock to write to local data
-                        self.lock.acquire()
-
-                        # Copy data locally
-                        self.u_star = u
-                        self.u_pitch_star = u_pitch
-
-                        # Unlock variable to allow reading
-                        self.lock.release()
-                        break
-
-                    except Exception as e:
-                        print('Exception when locking to write from current data', e)
+                                self.ready = False # let get outpu tknow you're done
+                                break
+                            else:
+                                break
+                        except Exception as e:
+                            print('Exception when locking to read from current data: ', e)
 
 
-
-                # Save local control vector and time that the control vector should start
-        except Exception as e:
-            print('Exception in optimization thread', e)
-            traceback.print_exc()
+                    # Save local control vector and time that the control vector should start
+            except Exception as e:
+                print('Exception in optimization thread', e)
+                traceback.print_exc()

@@ -76,7 +76,7 @@ class Test2(BaseAgent):
         self.optimizer = Optimization.Optimizer()
 
         # Start optimization thread
-        self.optimizer.MPC_thread.start()
+        # self.optimizer.MPC_thread.start()
 
         self.err_previous_PID = 0
         self.integration_previous_PID = 0
@@ -130,7 +130,7 @@ class Test2(BaseAgent):
 
         # Set optimizer values for optimal control algo for car
         self.s_ti = [2200.0, 100.0]
-        self.v_ti = [-50.0, 50.0]
+        self.v_ti = [-50.0, 500.0]
         self.s_tf = [-2200.0, 1200.0]
         self.v_tf = [-500.00, 200.0]
         self.r_ti = math.pi/2 # inital orientation of the car
@@ -146,7 +146,7 @@ class Test2(BaseAgent):
         # self.ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
         self.ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
         # self.ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
-        self.ball_state_high = BallState(Physics(location=Vector3(500, 0, 1800), velocity = Vector3(0, 0, 300)))
+        self.ball_state_high = BallState(Physics(location=Vector3(-2200, 0, 1500), velocity = Vector3(0, 0, 300)))
         self.ball_state_none = BallState()
         self.ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
         self.ball_state_optimizer_test = BallState(physics = Physics(location=Vector3(self.ball_si[0], 0, self.ball_si[1]), velocity = Vector3(self.ball_vi[0], 0, self.ball_vi[1])))
@@ -158,15 +158,21 @@ class Test2(BaseAgent):
                          physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
         self.car_state_falling = CarState(jumped=True, double_jumped=False, boost_amount=0)
         self.car_state_high = CarState(jumped=True, double_jumped=False, boost_amount=0,
-                         physics=Physics(location = Vector3(300, 500, 1000), velocity = Vector3(0,0,800)))
+                         physics=Physics(location = Vector3(2200, 00, 1500), velocity = Vector3(0,0,00), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
         self.car_state_optimizer_test = CarState(jumped=True, double_jumped=False,
                          physics=Physics(location = Vector3(self.s_ti[0], 0, self.s_ti[1]), velocity = Vector3(self.v_ti[0],0,self.v_ti[1]), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
+        self.car_state_optimizer_driving_test = CarState(jumped=False, double_jumped=False,
+                         physics=Physics(location = Vector3(-1000.0, 1000.0, 17), velocity = Vector3(0,0,0), rotation = Rotator(pitch = 0, yaw = 0.0, roll = 0.0)))
+
         # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
         #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
 
         #Pointed down car state for maximum initial error
         # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
         #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
+
+        game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
+        self.set_game_state(game_state)
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
         #update class data
@@ -177,6 +183,19 @@ class Test2(BaseAgent):
         self.t1 = copy.deepcopy(packet.game_info.seconds_elapsed)
         self.t_now = copy.deepcopy(packet.game_info.seconds_elapsed)
 
+        # print('wtf')
+        # Send current data to thread class
+        try:
+            if(self.optimizer.ready == False):
+                self.optimizer.go = False
+                # print('after lock')
+                self.optimizer.currentTime = copy.deepcopy(packet.game_info.seconds_elapsed)
+                self.optimizer.currentBall = copy.deepcopy(self.ball)
+                self.optimizer.currentCar = copy.deepcopy(self.car)
+                self.optimizer.go = True
+            # print('wrote data')
+        except Exception as e:
+            print('Thread has locked variable, waiting till next call', e)
 
         # Get inital time we start controlling the car
         if((self.ti == None) and (self.optimization_calculated == True)):
@@ -184,11 +203,17 @@ class Test2(BaseAgent):
         # Predict ball
         # self.predict_ball()
 
+        # Desired car state
+        self.car_desired = Car()
+        self.car_desired.x = 0.0
+        self.car_desired.y = 0.0
         # Derive optimal control vector
         if(self.optimization_calculated == False):
-            self.u_thrust_star, self.u_pitch_star, self.t_star, self.sx_star, self.sz_star, self.ball_sx, self.ball_sz, self.ball_vz, self.pitch_star = self.optimizer.optimize2D(self.s_ti, self.s_tf, self.v_ti, self.v_tf, self.r_ti, self.omega_ti, self.ball_si, self.ball_vi)
+            # self.u_thrust_star, self.u_pitch_star, self.t_star, self.sx_star, self.sz_star, self.ball_sx, self.ball_sz, self.ball_vz, self.pitch_star = self.optimizer.optimize2D(self.s_ti, self.s_tf, self.v_ti, self.v_tf, self.r_ti, self.omega_ti, self.ball_si, self.ball_vi)
+            self.t_star = self.optimizer.optimizeDriving(self.car, self.car_desired)
             self.optimization_calculated = True # Let environment handler know optimizer completed
-            return self.controller_state
+            print('t_star', self.t_star)
+            # return self.controller_state
 
 
         #Set car state (forcing to whichever algo i am working on)
@@ -197,8 +222,9 @@ class Test2(BaseAgent):
         # controller_flight = self.flight_interception()
 
         controller_ground = self.ground_interception()
-        print('delta_t: ', (self.t_now - self.ti), 'ball position', self.ball.position, 'car pos', self.car.position)
+        # print('ball position', self.ball.position, 'car pos', self.car.position)
         controller_optimize = self.get_current_u_star(self.ti, self.t_now)
+        # controller_optimize = self.optimizer.controllerState
 
         #Set the controller state depending on which state the car is in
         if(self.state.current_state == 0): #Car is in driving state
@@ -247,14 +273,19 @@ class Test2(BaseAgent):
         # ENVIRONMENT HANDLER (this should probably be a class)
         # If optimizer has not completed, keep car at initial conditions
 
-        if(self.optimization_calculated == False or self.car_set == False or self.ti == None):
-            game_state = GameState(cars = {self.index: self.car_state_optimizer_test}, ball = self.ball_state_optimizer_test)
+        if(self.car_set == False or self.optimization_calculated == False or self.ti == None):
+            game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
             self.set_game_state(game_state)
             self.car_set = True
+            self.setTime = packet.game_info.seconds_elapsed
+            self.optimizer.trigger = True
             # print('set the car')
         else: # Else let contorller control car, and don't control ball
-            game_state = GameState(ball =self.ball_state_none)
+            game_state = GameState(ball =self.ball_state_high)
             self.set_game_state(game_state)
+            if((packet.game_info.seconds_elapsed - self.setTime) > 10):
+                self.car_set = False
+                self.optimizer.trigger = False
 
         # game_state = GameState(ball =self.ball_state_none)
         # self.set_game_state(game_state)
@@ -332,7 +363,7 @@ class Test2(BaseAgent):
         controller = con.Controller()
 
         if(ti != None):
-            if((tf - ti) > self.optimizer.ts[-1]):
+            if((tf - ti) > self.t_star[-1]):
                 print('completed optimal trajectory')
                 self.completed_optimal_trajectory = True
                 controller.boostPercent = 0.0
@@ -348,8 +379,10 @@ class Test2(BaseAgent):
 
             # u_thrust_current = self.u_thrust_star[index]
             # u_pitch_current = self.u_pitch_star[index]
-            u_thrust_current = self.u_thrust_star[idx]
-            u_pitch_current = self.u_pitch_star[idx]
+            # u_thrust_current = self.u_thrust_star[idx]
+            # u_pitch_current = self.u_pitch_star[idx]
+            u_throttle_current = self.optimizer.u_throttle_d.value[idx]
+            u_turning_current = self.optimizer.u_turning_d.value[idx]
             # u_pitch_current = (tf - self.t_star[index]) * (self.u_pitch_star[index + 1] - self.u_pitch_star[index]) / (self.t_star[index+1] - self.t_star[index])
 
 
@@ -359,8 +392,13 @@ class Test2(BaseAgent):
             # boostPercent = max(min(boostPercent, 100), 0)
 
             #Set controller values
-            controller.boostPercent = u_thrust_current
-            controller.torques = np.array([0, u_pitch_current, 0])
+            # controller.boostPercent = u_thrust_current
+            # controller.torques = np.array([0, u_pitch_current, 0])
+
+            #Driving controller values
+            controller.boostPercent = 0
+            controller.steer = u_turning_current
+            controller.throttle = u_throttle_current
 
         else:
             controller.boostPercent = 0

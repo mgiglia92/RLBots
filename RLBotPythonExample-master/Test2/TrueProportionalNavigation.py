@@ -53,19 +53,25 @@ class TPN:
         self.t1 = 1
 
     def update(self, car, ball, time):
-        self.car = car
-        self.ball = ball
-        #get times
-        self.t0 = self.t1
-        self.t1 = time
+        try:
+            self.car = car
+            self.ball = ball
+            #get times
+            self.t0 = self.t1
+            self.t1 = time
 
-        #LOS at times and rate using time
-        self.LOS0 = self.LOS1
-        self.LOS1 = ball.position - car.position
-        self.LOS_rate1 = (self.LOS1 - self.LOS0) / (self.t1 - self.t0) #rate of change of lOS
-        self.LOS_rate_mag1 = np.linalg.norm(self.LOS_rate1)
+            #LOS at times and rate using time
+            self.LOS0 = self.LOS1
+            self.LOS1 = ball.position - car.position
+            if((self.t1 - self.t0) == 0):
+                self.LOS_rate1 = 0
+            else:
+                self.LOS_rate1 = (self.LOS1 - self.LOS0) / (self.t1 - self.t0) #rate of change of lOS
+            self.LOS_rate_mag1 = np.linalg.norm(self.LOS_rate1)
 
-        self.LOSunit = self.LOS1 / np.linalg.norm(self.LOS1)
+            self.LOSunit = self.LOS1 / np.linalg.norm(self.LOS1)
+        except Excpetion as e:
+            print(e)
 
     def getUnitVectors(self):
         #Get LOS unit vector
