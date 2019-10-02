@@ -1,6 +1,8 @@
   #imports for LQR functions
 from __future__ import division, print_function
 import csv
+import sys
+import os
 
 
 import multiprocessing as mp
@@ -11,13 +13,17 @@ import Predictions
 from CoordinateSystems import CoordinateSystems
 from BallController import BallController
 from pyquaternion import Quaternion
-from TrajectoryGeneration import Trajectory
 from TrueProportionalNavigation import TPN
 import controller as con
 import State as s
 import DrivingEquations
 import DiscreteDynamicModel as ddm
-import Optimization
+import Optimization2
+from Trajectory import Trajectory
+from Car import Car
+from GUI import GUI
+from tkinter import Tk, Label, Button, StringVar, Entry, Listbox
+
 # import tensorflow
 # tf.merge_all_summaries = tf.summary.merge_all
 # tf.train.SummaryWriter = tf.summary.FileWriter
@@ -51,9 +57,14 @@ import queue
 
 import queue_testing
 
-class Test2(BaseAgent):
+class Lotus(BaseAgent):
 
     def initialize_agent(self):
+        #Initialize GUI
+        self.root = Tk()
+        self.g = GUI(self.root)
+        # g.master.mainloop() #GUI MAIN LOOP start
+
         self.csv_write_flag = 0
         #This runs once before the bot starts up
         self.packet = None
@@ -61,72 +72,13 @@ class Test2(BaseAgent):
         self.resetFlag = 0;
         self.setCarState()
         self.car = Car()
-        self.fbController = FeedbackController2()
-        self.orientationCounter = orientationCounter()
         self.boostCounter = BoostCounter()
         self.boostCounter2 = BoostCounter2()
         self.boostCounter3 = BoostCounter3()
-        self.counter = TestCounter(50, 100)
-        self.counter2 = TestCounter(50, 100)
         self.ball = Ball()
-        self.BallController = BallController()
-        self.CoordinateSystems = CoordinateSystems()
-        self.Trajectory = Trajectory()
-        self.Trajectory.startTrajectory('circular')
-        self.data = Plotting.data()
-        self.TPN = TPN()
-        self.state = s.State()
+
         self.controller = con.Controller()
-
-        self.err_previous_PID = 0
-        self.integration_previous_PID = 0
-
-        self.s_before = np.array([0,0,0])
-        self.s_now = np.array([0,0,0])
-        self.v_before = np.array([0,0,0])
-        self.v_now = np.array([0,0,0])
-        self.t0 = 0 #Time at initial time step
-        self.t1 = 0 #Time at time step tk+1
-        self.t2 = 0
-        self.p0 = np.array([0,0,0]) #position vector at initial time
-        self.p1 = np.array([0,0,0]) #position vector at tk+1
-        self.v0 = np.array([0,0,0]) #velocity at initial time
-        self.v1 = np.array([0,0,0])
-        self.q0 = Quaternion() #Orientation at initial time
-        self.q1 = Quaternion()
-        self.w0 = np.array([0,0,0]) #angular velocity at initial time
-        self.w1 = np.array([0,0,0])
-        self.a0 = np.array([0,0,0]) #accelreation vector at initial time
-        self.a1 = np.array([0,0,0])
-        self.T0 = np.array([0,0,0]) #Torque vector at initial time
-        self.T1 = np.array([0,0,0])
-
-        # Controller State at different times
-        self.control_state_t0 = ddm.ControlVariables(SimpleControllerState())
-        self.control_state_t1 = ddm.ControlVariables(SimpleControllerState())
-        self.control_state_t2 = ddm.ControlVariables(SimpleControllerState())
-
-
-        # Model State at different times
-        #     def __init__(self, car, control_variables, coordinate_system, time):
-        self.model_states = list()
-        self.model_state_t0 = None
-        self.model_state_t1 = None
-        self.model_state_t2 = None
-
-        self.plotTime0 = None
-        self.plotTime1 = None
-        self.plotFlag = False
-
-        # Optimal control variables
-        self.u_star = None #Optimal control vector from optimization algo
-        self.t_star = None
-        self.ti = None # Initial time value to bias optimal control vector properly
-        self.t_now = None
-        self.optimization_calculated = False
-        self.optimal_control_completed = False
-        self.car_set = False
-        self.completed_optimal_trajectory = False
+        self.trajectory = Trajectory()
 
         # Set optimizer values for optimal control algo for car
         self.s_ti = [-2200.0, 100.0]
@@ -182,169 +134,42 @@ class Test2(BaseAgent):
         self.car_state_optimizer_driving_test = CarState(
                  physics=Physics(location = Vector3(self.car_start.x, self.car_start.y, 17), velocity = Vector3(self.car_start.vx,self.car_start.vy,0), rotation = Rotator(pitch = 0, yaw = self.car_start.yaw, roll = 0.0)))
 
-        # car_state2 = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(00, 0, 500),velocity=Vector3(0, 0, 0)))
+        game_state = GameState(cars = {self.index: self.car_state}, ball = self.ball_state_high)
+        self.set_game_state(game_state)
 
-        #Pointed down car state for maximum initial error
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=1,
-        #                  physics=Physics(location = Vector3(500, 0, 500),velocity=Vector3(0, 0, 1100), rotation = Rotator(yaw = math.pi/2, pitch = -1*math.pi/2, roll = math.pi/2)))
-
+        # self.optimizer.solving = False
         game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
         self.set_game_state(game_state)
 
-        # Optimizer class
-        self.optimizer = Optimization.Optimizer()
+        self.flag = True
 
-        # Start optimization thread
-        self.optimizer.MPC_thread.start()
-
-        self.optimizer.solving = False
-        time.sleep(1)
+        time.sleep(2)
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
-        #update class data
-        self.update_data(packet)
 
-        #shift t1 to previous time t0, and set t1 to the new current time
-        self.t0 = self.t1
-        self.t1 = copy.deepcopy(packet.game_info.seconds_elapsed)
-        self.t_now = copy.deepcopy(packet.game_info.seconds_elapsed)
+        #Update GUI and pass important values to GUI
+        self.g.label_tnow.config(text=str(round(float(packet.game_info.seconds_elapsed), 2)))
+        self.root.update()
+        print(self.g.entry_initial_x.get())
+        # update trajectory data
+        self.trajectory.TG.update_from_packet(packet, self.index)
 
-        # Push data to queue for MPC
-        try:
-            self.optimizer.data.put([self.car, self.car_desired])
-        except Exception as e:
-            print(e)
-
-        try:
-            if(self.optimizer.control_data.empty() == False):
-                [self.t, self.throttle, self.steer, self.thrust] = self.optimizer.control_data.get()
-                self.optimizer.control_data.queue.clear()
-                self.ti = copy.deepcopy(packet.game_info.seconds_elapsed) # Reset time to current time since we're updating the control vector
-                print('t', self.t, 'throttle', self.throttle.value, 'turn', self.steer.value, 'thrust', self.thrust.value)
-
-            controller_optimize = self.get_current_u_star(self.ti, self.t_now) # Get which section on control vector we want
-        except Exception as e:
-            print(e)
-
-
-        # Get inital time we start controlling the car
-        # if((self.ti == None) and (self.optimization_calculated == True)):
-        #     self.ti = copy.deepcopy(packet.game_info.seconds_elapsed)
-
-        # Predict ball
-        # self.predict_ball()
-
-
-
-        # Derive optimal control vector
-        if(self.optimization_calculated == False):
-            # self.u_thrust_star, self.u_pitch_star, self.t_star, self.sx_star, self.sz_star, self.ball_sx, self.ball_sz, self.ball_vz, self.pitch_star = self.optimizer.optimize2D(self.s_ti, self.s_tf, self.v_ti, self.v_tf, self.r_ti, self.omega_ti, self.ball_si, self.ball_vi)
-            # self.t_star = self.optimizer.optimizeDriving(self.car_start, self.car_desired)
-            self.t_star = [0,0,0,0,0,0]
-            self.optimization_calculated = True # Let environment handler know optimizer completed
-            # print('t_star', self.t_star, 'u star', self.optimizer.u_throttle_d.value, 'u thrust', self.optimizer.u_thrust_d.value)
-
-            # return self.controller_state
-
-
-        #Set car state (forcing to whichever algo i am working on)
-        self.state.set_state(4) # 4 is optimization algorithm
-
-        # controller_flight = self.flight_interception()
-
-        controller_ground = self.ground_interception()
-        # print('ball position', self.ball.position, 'car pos', self.car.position)
+        self.controller.boostPercent = 0
+        self.controller.steer = 0.5
+        self.controller.throttle = 1
+        self.setControllerState(self.controller)
 
         try:
-            # controller_optimize = self.controller
-            controller_optimize = self.get_current_u_star(self.ti, self.t_now)
+            if(self.flag):
+                self.trajectory.get_simple_test_trajectory(packet, self.index)
+            self.flag = False
+
         except Exception as e:
-            controller_optimize = self.controller
-            print(e)
-        # controller_optimize = self.optimizer.controllerState
+                exc_type, exc_obj, exc_tb = sys.exc_info()
+                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                print(exc_type, fname, exc_tb.tb_lineno)
+                print(e)
 
-        #Set the controller state depending on which state the car is in
-        if(self.state.current_state == 0): #Car is in driving state
-            self.setControllerState(controller_ground)
-        if(self.state.current_state == 1):
-            self.setControllerState(controller_flight)
-        if(self.state.current_state == 4): # Use controller optimization vector
-            self.setControllerState(controller_optimize)
-
-        #Control ball for testing functionss
-        # x, y, z, vi = self.BallController.bounce(500,500,300,1500)
-        # Vt = self.BallController.rotateAboutZ(np.matrix([0,0,0]), math.pi/10)
-        # p = np.array([00, 1500, 100])
-        # v = np.array([-600, -500, 1500])
-        # ballpos, ballvel = self.BallController.projectileMotion(p, v)
-        # # vx = self.BallController.oscillateX(-1500, 0, 1000)
-        # vx = Vt.item(0)
-        # vy = Vt.item(1)
-        # # vz = 0
-
-
-
-        # if(self.BallController.release == 0):
-        #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-        #     game_state = GameState(ball = ball_state2, cars = {self.index: car_state})
-        #     self.set_game_state(game_state)
-        # # else:
-        # #
-        # #     # game_state = GameState(cars = {self.index: car_state_hold})
-        # #     game_state = GameState(ball = ball_state_linear)
-        # #     # game_state = GameState(ball = ball_state2, cars = {self.index: car_state_hold})
-        # #
-        # # self.set_game_state(game_state)
-        #
-        # #Reset to initial states after counter runs
-        # if(self.BallController.counter1 > 2000):
-        #     self.BallController.release = 0
-        #     self.BallController.counter1 = 0
-        # else:
-        #     # game_state = GameState(ball = ball_state, cars = {self.index: car_stateHoldPosition})
-        #     # game_state = GameState(cars = {self.index: car_state_falling})
-        #     game_state = GameState(ball = ball_state_none)
-        #     self.set_game_state(game_state)
-
-
-        # ENVIRONMENT HANDLER (this should probably be a class)
-        # If optimizer has not completed, keep car at initial conditions
-
-        if(self.car_set == False or self.optimization_calculated == False):
-            game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
-            self.set_game_state(game_state)
-            self.car_set = True
-            self.setTime = packet.game_info.seconds_elapsed
-            self.optimizer.trigger = True
-            # print('set the car')
-        else: # Else let contorller control car, and don't control ball
-            game_state = GameState(ball =self.ball_state_high)
-            self.set_game_state(game_state)
-            if((packet.game_info.seconds_elapsed - self.setTime) > 20):
-                self.car_set = False
-                self.optimizer.trigger = False
-
-        # game_state = GameState(ball =self.ball_state_none)
-        # self.set_game_state(game_state)
-        #Predictions
-        # self.predict_car()
-        #
-        # self.save_trajectory_data()
-        #
-        # test_time = packet.game_info.seconds_elapsed
-        # control_state_t0 = ddm.ControlVariables(self.controller_state)
-        # model_state_t0 = ddm.ModelState(self.car, control_state_t0, self.CoordinateSystems, packet.game_info.seconds_elapsed)
-        #
-        # future_state_t1 = ddm.get_future_state(model_state_t0, 0.1)
-        # print(future_state_t1)
-
-
-
-        #RENDERING
-        # self.render()
-
-        # print(self.ball.position)
         return self.controller_state
 
     def reset(self):
@@ -778,7 +603,6 @@ class Test2(BaseAgent):
             print ('Exception in rendering:', e)
             traceback.print_exc()
 
-
 class Vector2:
     def __init__(self, x=0, y=0):
         self.x = float(x)
@@ -806,7 +630,6 @@ class Vector2:
 
         return correction
 
-
 class Ball:
     def __init__(self):
         self.x = 0
@@ -830,395 +653,7 @@ class Ball:
         self.position = np.array([self.x,self.y,self.z])
         self.velocity = np.array([self.vx, self.vy, self.vz])
 
-class Car:
-    def __init__(self):
-        #Member variables initialized
 
-        #mass
-        self.mass = None
-        #position
-        self.x = None
-        self.y = None
-        self.z = None
-
-        #velocity
-        self.vx = None
-        self.vy = None
-        self.vz = None
-
-        #Pitch Roll yaw
-        self.pitch = None
-        self.roll = None
-        self.yaw = None
-
-        #angular velocities
-        self.wx = None
-        self.wy = None
-        self.wz = None
-        self.position = np.array([0,0,0])
-        self.velocity = np.array([0,0,0])
-        self.angular_velocity = np.array([0,0,0])
-        self.attitude = np.array([0,0,0])
-        #MUST CHECK THSESE TO MAKE SURE THEY CORRELATE PROPERLY
-
-        self.is_demolished = False
-        self.has_wheel_contact = True
-        self.is_super_sonic = False
-        # self.jumped = False
-        self.boost_left = '100'
-        # self.double_jumped = 'False'
-
-    def update(self, data):
-        #Member variables initialized
-        #position
-        self.x = data.physics.location.x
-        self.y = data.physics.location.y
-        self.z = data.physics.location.z
-
-        #velocity
-        self.vx = data.physics.velocity.x
-        self.vy = data.physics.velocity.y
-        self.vz = data.physics.velocity.z
-
-        #Pitch Roll yaw
-        self.pitch = data.physics.rotation.pitch
-        self.roll = data.physics.rotation.roll
-        self.yaw = data.physics.rotation.yaw
-
-        #angular velocities
-        self.wx = data.physics.angular_velocity.x
-        self.wy = data.physics.angular_velocity.y
-        self.wz = data.physics.angular_velocity.z
-
-        self.position = np.array([self.x,self.y,self.z])
-        self.velocity = np.array([self.vx, self.vy, self.vz])
-        self.angular_velocity = np.array([self.wx, self.wy, self.wz])
-        self.attitude = np.array([self.roll, self.pitch, self.yaw])
-
-        self.is_demolished = data.is_demolished
-        self.has_wheel_contact = data.has_wheel_contact
-        self.is_super_sonic = data.is_super_sonic
-        # self.jumped = data.jumped
-        self.boost_left = data.boost
-        # self.double_jumped = data.double_jumped
-
-    def printVals(self):
-        print("x:", int(self.x), "y:", self.y, "z:", self.z, "wx:", self.wx, "wy:", self.wy, "wz:", self.wz)
-
-class FeedbackController: #This is the controller algorithm possibly full state feedback possibly state observer?
-    def __init__(self):
-        self.values = None
-        self.boostPercent = 0.0 #boost Percentage 0 - 100
-        self.lastz = None #the tick priors value of position
-        self.lastvz = None #the tick priors value of velocity
-        self.lastError = 0.0 #prior error
-        self.errorzI = 0.0 #summation of values for integral of error
-        self.errorzICOUNTER = 1.0
-
-        #Rocket League physics (using unreal units (uu))
-        self.gravity = 650 #uu/s^2
-
-        #State Space matrix coefficients
-        self.mass = 14.2
-        self.M = 1/14.2
-        self.A = np.array([[0.0, 1.0], [0.0, 0.0]])
-        self.B = np.array([[0.0], [1.0]])
-        self.C = np.array([[1, 0], [0, 0]])
-        self.D = np.array([[0], [0]])
-        self.system = control.ss(self.A, self.B, self.C, self.D, None)
-        #print(self.B)
-        self.poles = np.array([-2.5, -2.8])
-        self.K = control.place(self.A, self.B, self.poles)
-        self.k1 = self.K[0, 0]
-        self.k2 = self.K[0, 1]
-        self.kr = 1.0
-
-        #print(self.K)
-        #print(control.pole(self.system))
-
-    def defineStateSpaceSystem(self, A, B, C, D, dt):
-        self.system = control.ss(A, B, C, D, dt)
-
-    def heightControl(self, desz, desvz, z, vz):
-
-        #define matricies
-
-
-        errorzP = desvz - vz #error of position
-        self.errorzICOUNTER = self.errorzICOUNTER + 1.0
-        self.errorzI = (errorzP + self.errorzI) / self.errorzICOUNTER
-        errorzD = errorzP + self.lastError
-
-        P = 1
-        I = 0
-        D = 0
-
-
-        #output = (errorzP * P) + (self.errorzI * I) + (errorzD * D)
-        output = errorzP * P
-        self.boostPercent = output
-
-        #Print data
-        #print(desvz,'|', vz, '|', output, '|', errorzD * D)
-        #print(errorzP, '|', vz)
-
-    def gainFlightControl(self, desz, desvz, z, vz):
-        u = (-self.k1*(z - desz)) + (-self.k2 * (vz - desvz))#add desz here since equation considers xequilibrium point as center
-        #print('u:', int(u), '/', 'z:', int(z), '/', 'vz:', int(vz), '/', 'desz', int(desz), '/', 'desvz', int(desvz))
-        self.boostPercent = (u)
-
-
-class FeedbackController2: #This is the controller algorithm possibly full state feedback possibly state observer?
-    def __init__(self):
-        self.values = None
-        self.boostPercent = 0.0 #boost Percentage 0 - 100
-        self.pitchPercent = 0 #pitch percentage
-        self.lastz = None #the tick priors value of position
-        self.lastvz = None #the tick priors value of velocity
-        self.lastError = 0.0 #prior error
-        self.errorzI = 0.0 #summation of values for integral of error
-        self.errorzICOUNTER = 1.0
-
-        #Rocket League physics (using unreal units (uu))
-        self.g = 650 #uu/s^2
-        self.Dp = -2.798194258050845 #Drag coeff for pitch
-        self.Tp = 12.14599781908070
-        T_r = -36.07956616966136; # torque coefficient for roll
-        T_p = -12.14599781908070; # torque coefficient for pitch
-        T_y =   8.91962804287785; # torque coefficient for yaw
-        D_r =  -4.47166302201591; # drag coefficient for roll
-        D_p = -2.798194258050845; # drag coefficient for pitch
-        D_y = -1.886491900437232; # drag coefficient for yaw
-        self.I = 1
-        self.m = 180 #mass of the car arbitrary units
-
-
-        #State Space matrix coefficients
-        self.A = np.matrix([[0, 1], [0, 0]])
-        self.B = np.matrix([[0],[self.Tp]])
-        self.C = np.matrix([[1, 0], [0,1]])
-        self.D = np.matrix([[0],[0]])
-        self.system = control.ss(self.A, self.B, self.C, self.D, None)
-        self.controllability = control.ctrb(self.A, self.B)
-        print("ctrb:", self.controllability)
-        #print(self.B)
-
-        #print(control.ctrb(self.A, self.B))
-        self.poles = np.array([-1000 , -5])
-        print('poles: ', self.poles)
-        #self.eigen= control.pole(self.system)
-        self.eigen = self.system.pole()
-
-        print("Eigen: ", self.eigen)
-        self.K = control.place(self.A, self.B, self.poles)
-        print("\nK: ", self.K)
-
-    def defineStateSpaceSystem(self, A, B, C, D, dt):
-        self.system = control.ss(A, B, C, D, dt)
-
-    def heightControl(self, desz, desvz, z, vz):
-
-        #define matricies
-
-
-        errorzP = desvz - vz #error of position
-        self.errorzICOUNTER = self.errorzICOUNTER + 1.0
-        self.errorzI = (errorzP + self.errorzI) / self.errorzICOUNTER
-        errorzD = errorzP + self.lastError
-
-        P = 1
-        I = 0
-        D = 0
-
-
-        #output = (errorzP * P) + (self.errorzI * I) + (errorzD * D)
-        output = errorzP * P
-        self.boostPercent = output
-
-        #Print data
-        #print(desvz,'|', vz, '|', output, '|', errorzD * D)
-        #print(errorzP, '|', vz)
-
-    def gainFlightControl(self, desz, desvz, z, vz):
-        u = (-self.k1*(z - desz)) + (-self.k2 * (vz - desvz))#add desz here since equation considers xequilibrium point as center
-        #print('u:', int(u), '/', 'z:', int(z), '/', 'vz:', int(vz), '/', 'desz', int(desz), '/', 'desvz', int(desvz))
-        self.boostPercent = (u)
-
-    def pitchControl(self, desired, current):
-
-        # current = np.matrix([ z,  x,  theta,  vz,  vx,  omega])
-        # desired = np.matrix( [desz,  desx,  destheta,  desvz,  desvx ,  desomega] )
-        # print('current: ', current, ' desired: ', desired)
-        # print("des - cur:", np.subtract(desired, current))
-        u = -1*np.matmul(self.K, np.subtract(desired, current).T)
-        #print("u:", u)
-        self.torque = u
-
-        self.pitchPercent = u
-        self.pitchPercent =  max(min(self.pitchPercent, 1), -1)
-
-        # print('current: ', current, ' desired: ', 'u: ', u)
-
-        # print('err: ', np.subtract(desired, current), 'u: ', u, 'cur:', current[0])
-        return self.boostPercent, self.pitchPercent
-        #print("err_z: ", (desz - z), "err_x: ", (desx - x), "err_theta: ", (destheta - theta), "err_vz: ", (desvz - vz), "err_vx: ", (desvx - x), "err_vomega: ", (desomega - omega) )
-
-class FeedbackController3: #This is the controller algorithm possibly full state feedback possibly state observer?
-    def __init__(self):
-        self.values = None
-        self.boostPercent = 0.0 #boost Percentage 0 - 100
-        self.pitchPercent = 0 #pitch percentage
-        self.lastz = None #the tick priors value of position
-        self.lastvz = None #the tick priors value of velocity
-        self.lastError = 0.0 #prior error
-        self.errorzI = 0.0 #summation of values for integral of error
-        self.errorzICOUNTER = 1.0
-
-        #Rocket League physics (using unreal units (uu))
-        self.g = 650 #uu/s^2
-        self.D = 2.798194258050845 #Drag coeff for pitch
-        self.I = 1 #=
-        self.m = 180 #mass of the car arbitrary units
-
-
-        #State Space matrix coefficients
-        Asvd = np.matrix([[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0,0.0, 0.0, 0.0], [ self.g, 0.0, 0.0, 0.0], [ 0.0, 0.0, 0.0, (-1*self.D/self.I)]])
-
-        self.A = np.matrix([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [0.0, 0.0,0.0,0.0, 0.0, 0.0], [0.0, 0.0, self.g, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, (-1*self.D/self.I)]])
-        self.B = np.matrix([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [(1 / self.m), 0.0], [0.0, 0.0], [0.0, 1.0]])
-        self.C = np.matrix([[1,1, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0]])
-        self.D = np.matrix([[0, 0], [0, 0]])
-        self.Q = np.matrix([[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,5]])
-        self.R = np.matrix([[1, 0], [0, 1]])
-        self.system = control.ss(self.A, self.B, self.C, self.D, None)
-        self.controllability = control.ctrb(self.A, self.B)
-        print("ctrb:", self.controllability)
-        #print(self.B)
-
-        #print(control.ctrb(self.A, self.B))
-        self.poles = np.array([-100000,-100,-20, -30, -1000000000000000000000, -100000000])
-        #self.eigen= control.pole(self.system)
-        self.eigen = self.system.pole()
-        #Asvd = np.matrix([[0.0, 1.0, 0.0, 0.0], [ 0.0, 0.0, 1.0, 0.0], [ 0.0, 0.0, 0.0, 1.0], [0.0,0.0, 0.0, 0.0], [self.g, 0.0, 0.0, 0.0], [ 0.0, 0.0, 0.0, (-1*self.D/self.I)]])
-
-        U,S,V = np.linalg.svd(self.A)
-        #print("H: ", H)
-        print("U: ", U, "\nS: ", S, "\nV: ", V)
-        print("Eigen: ", self.eigen)
-        #self.poles = np.array([0.00000000e+00+0.00000000e+00j, -3.58188374e+00+0.00000000e+00j, 2.54338639e-06+4.40528914e-06j, -2.54338639e-06-4.40528914e-06j, 5.08677277e-06+0.00000000e+00j,  0.00000000e+00+0.00000000e+00j])
-        self.K = control.place(self.A, self.B, self.eigen)
-        print("\nK: ", self.K)
-        #self.Klqr, self.state, self.eigen = lqr(self.A, self.B, self.Q, self.R)
-        #self.K, self.X, self.eigen = lqr(self.A, self.B, self.Q, self.R)
-        #print('K matrix:', self.K, '\nState matrix: ', self.state, '\nEigen values: ', self.eigen)
-
-        self.k1 = self.K[0, 0]
-        self.k2 = self.K[0, 1]
-        self.k3 = self.K[0, 2]
-        self.k4 = self.K[0, 3]
-        self.k5 = self.K[0, 4]
-        self.k6 = self.K[0, 5]
-        self.k7 = self.K[1, 0]
-        self.k8 = self.K[1, 1]
-        self.k9 = self.K[1, 2]
-        self.k10 = self.K[1, 3]
-        self.k11 = self.K[1, 4]
-        self.k12 = self.K[1, 5]
-        self.kr = 1.0
-
-        #inputs to the car
-        # self.thrust = 0
-        # self.torque = 0
-        #print(self.K)
-        #print(control.pole(self.system))
-
-    def defineStateSpaceSystem(self, A, B, C, D, dt):
-        self.system = control.ss(A, B, C, D, dt)
-
-    def heightControl(self, desz, desvz, z, vz):
-
-        #define matricies
-
-
-        errorzP = desvz - vz #error of position
-        self.errorzICOUNTER = self.errorzICOUNTER + 1.0
-        self.errorzI = (errorzP + self.errorzI) / self.errorzICOUNTER
-        errorzD = errorzP + self.lastError
-
-        P = 1
-        I = 0
-        D = 0
-
-
-        #output = (errorzP * P) + (self.errorzI * I) + (errorzD * D)
-        output = errorzP * P
-        self.boostPercent = output
-
-        #Print data
-        #print(desvz,'|', vz, '|', output, '|', errorzD * D)
-        #print(errorzP, '|', vz)
-
-    def gainFlightControl(self, desz, desvz, z, vz):
-        u = (-self.k1*(z - desz)) + (-self.k2 * (vz - desvz))#add desz here since equation considers xequilibrium point as center
-        #print('u:', int(u), '/', 'z:', int(z), '/', 'vz:', int(vz), '/', 'desz', int(desz), '/', 'desvz', int(desvz))
-        self.boostPercent = (u)
-
-    def pitchControl(self, desired, current):
-        #convert theta counted counter clockwise positive from the +z axis, game gives us ccw from the +x axis
-        #theta = theta -( math.pi/2)
-
-        #input values considering all state variables
-        # u1 = (self.g*self.m) + (-self.k1*(z- desz)) + (-self.k2 * (vz-desvz)) + (-self.k3 * (x - desx)) + (-self.k4 * (vx - desvx)) + (-self.k5 * (theta - destheta)) + (-self.k6 * (omega - desomega))
-        # u2 = (-self.k7*(z- desz)) + (-self.k8 * (vz-desvz)) + (-self.k9 * (x - desx)) + (-self.k10 * (vx - desvx)) + (-self.k11 * (theta - destheta)) + (-self.k12 * (omega - desomega))
-
-        #input values considering only z and xs
-        # u1 = (self.g*self.m) + (-self.k1*(z- desz)) + (-self.k2 * (vz-desvz)) + (-self.k3 * (x - desx)) + (-self.k4 * (vx - desvx))
-        # u2 = (-self.k7*(z- desz)) + (-self.k8 * (vz-desvz)) + (-self.k9 * (x - desx)) + (-self.k10 * (vx - desvx))
-
-
-        # current = np.matrix([ z,  x,  theta,  vz,  vx,  omega])
-        # desired = np.matrix( [desz,  desx,  destheta,  desvz,  desvx ,  desomega] )
-        #print("des - cur:", desired - current)
-        u = -1*np.matmul(self.K, np.transpose(desired - current))
-        #print("u:", u)
-        self.thrust = u[0]# + (self.T/self.m) #u[0] is u1equil, so add T/m to bring it back to u1 [du1e = u1 + u1e]
-
-        self.torque =  u[1]
-
-        #Convert desired thrust and torque to percent thrust
-        acc = self.thrust/self.m
-        self.boostPercent = (self.thrust/(991.666 + 60)) * 100
-        self.boostPercent = max(min(self.boostPercent, 100), 0)
-        self.pitchPercent = (self.torque/12.46)
-        self.pitchPercent =  max(min(self.pitchPercent, 1), -1)
-
-        # print('current: ', current, ' desired: ', desired, 'bP: ',  int(self.boostPercent), 'pP: ', float(self.pitchPercent))
-
-        return self.boostPercent, self.pitchPercent
-        #print("err_z: ", (desz - z), "err_x: ", (desx - x), "err_theta: ", (destheta - theta), "err_vz: ", (desvz - vz), "err_vx: ", (desvx - x), "err_vomega: ", (desomega - omega) )
-
-class orientationCounter:
-    def __init__(self):
-        self.counter = 0.0
-        self.max = 10.0
-
-    def pitch(self, desiredPitchPercentage):
-        #print(desiredBoostPercentage)
-        if(self.counter >= self.max): #If counter is at max make sure to make it zero before sending boost confimation
-            if((self.counter / self.max) > (desiredPitchPercentage / 100.0)):
-                self.counter = 0
-                return 0
-            else:
-                self.counter = 0
-                return 1
-        if((self.counter / self.max) > (desiredPitchPercentage / 100.0)):
-            #Turn on boost
-            self.counter = self.counter + 1
-            return 0
-        else:
-            self.counter = self.counter + 1
-
-            return 1
 class BoostCounter: #
     def __init__(self):
         self.counter = 0.0
@@ -1279,315 +714,3 @@ class BoostCounter3:
             return 1
         else:
             return 0
-
-def clamp(n, minn, maxn):
-    return max(min(maxn, n), minn)
-
-class TestCounter:
-    def __init__(self, l1, l2):
-        self.count = 0
-        self.lap1 = l1
-        self.lap2 = l2
-    def reset(self):
-        self.count = 0
-    def increment(self):
-        self.count = self.count + 1
-    def decrement(self):
-        self.count = self.count - 1
-
-def get_car_facing_vector(data):
-    pitch = float(data.physics.rotation.pitch)
-    yaw = float(data.physics.rotation.yaw)
-
-    facing_x = math.cos(pitch) * math.cos(yaw)
-    facing_y = math.cos(pitch) * math.sin(yaw)
-
-    return Vector2(facing_x, facing_y)
-
-
-#Helpful function/classes for the future
-def turn_radius(v):
-    if v == 0:
-        return 0
-    return 1.0 / curvature(v)
-
-# v is the magnitude of the velocity in the car's forward direction
-def curvature(v):
-    if 0.0 <= v < 500.0:
-        return 0.006900 - 5.84e-6 * v
-    elif 500.0 <= v < 1000.0:
-        return 0.005610 - 3.26e-6 * v
-    elif 1000.0 <= v < 1500.0:
-        return 0.004300 - 1.95e-6 * v
-    elif 1500.0 <= v < 1750.0:
-        return 0.003025 - 1.10e-6 * v
-    elif 1750.0 <= v < 2500.0:
-        return 0.001800 - 0.40e-6 * v
-    else:
-        return 0.0
-
-#LQR functions from http://www.mwm.im/lqr-controllers-with-python/
-def lqr(A,B,Q,R):
-    # """Solve the continuous time lqr controller.
-    #
-    # dx/dt = A x + B u
-    #
-    # cost = integral x.T*Q*x + u.T*R*u
-    # """
-    #ref Bertsekas, p.151
-
-    #first, try to solve the ricatti equation
-    X = np.matrix(scipy.linalg.solve_continuous_are(A, B, Q, R))
-
-    #compute the LQR gain
-    K = np.matrix(scipy.linalg.inv(R)*(B.T*X))
-
-    eigVals, eigVecs = scipy.linalg.eig(A-B*K)
-
-    return K, X, eigVals
-
-def dlqr(A,B,Q,R):
-    # """Solve the discrete time lqr controller.
-    #
-    # x[k+1] = A x[k] + B u[k]
-    #
-    # cost = sum x[k].T*Q*x[k] + u[k].T*R*u[k]
-    # """
-    #ref Bertsekas, p.151
-
-    #first, try to solve the ricatti equation
-    X = np.matrix(scipy.linalg.solve_discrete_are(A, B, Q, R))
-
-    #compute the LQR gain
-    K = np.matrix(scipy.linalg.inv(B.T*X*B+R)*(B.T*X*A))
-
-    eigVals, eigVecs = scipy.linalg.eig(A-B*K)
-
-    return K, X, eigVals
-
-def getXZangle(pitch, roll, yaw):
-    #Create rotation matricies from euler angles, then pick out data necessary to get desired 2D angle
-
-    Ry = np.matrix([
-    [math.cos(yaw), -math.sin(yaw), 0],
-    [math.sin(yaw), math.cos(yaw), 0],
-    [0, 0, 1]
-    ])
-
-    Rp = np.matrix([
-    [math.cos(pitch), 0, math.sin(pitch)],
-    [0, 1, 0],
-    [-math.sin(pitch), 0, math.cos(pitch)]
-    ])
-
-    Rr = np.matrix([
-    [1, 0, 0],
-    [0, math.cos(roll), -math.sin(roll)],
-    [0, math.sin(roll), math.cos(roll)]
-    ])
-
-    R =  Rr @ Rp @ Ry
-
-    unitx = np.matrix([1.0,0.0,0.0]) #X axis unit vector
-    vp = np.dot(R, unitx.transpose()) #new direction vector of body of car
-    #print(vp)
-
-    v1 = np.matrix([1,0]) #XZ plane x unit vector
-    v2 = np.matrix([vp.item(0), vp.item(2)] ) #rotated vector projected onto XZ plane
-    n_v1 = np.linalg.norm(v1, ord=1)
-    n_v2 = np.linalg.norm(v2, ord=1)
-    cosang = np.inner(v1, v2)
-    sinang = np.linalg.norm(np.cross(v1, v2))
-    angle = np.arctan2(sinang, cosang)
-
-    angle = np.sign(vp[2]) * angle #make sure angle is negative if we go past 180def, do this my multiplying angle by the sign of the z position of the resulstant orientation vector vp
-    # print('v1: ', v1, " v2: ", v2, ' sangle:', sinang, ' cang: ', cosang, ' angle:', angle)
-    return angle #returning angle to x axis
-
-def getAngle(bx,bz,cx,cz):
-    c = np.matrix([cx, cz])
-    b = np.matrix([bx, bz])
-    v1 = np.matrix([1, 0])
-    v2 = np.matrix(np.subtract(b, c))
-    cosang = np.inner(v1, v2)
-    sinang = np.linalg.norm(np.cross(v1, v2))
-    angleCtoB = np.arctan2(sinang, cosang)
-    angleCtoB = np.sign(v2.item(1)) * angleCtoB #fix angle
-    return angleCtoB
-
-#Quaternion functions
-def normalize(v, tolerance=0.00001):
-    mag2 = sum(n * n for n in v)
-    if abs(mag2 - 1.0) > tolerance:
-        mag = sqrt(mag2)
-        v = tuple(n / mag for n in v)
-    return v
-
-def q_mult(q1, q2):
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-    y = w1 * y2 + y1 * w2 + z1 * x2 - x1 * z2
-    z = w1 * z2 + z1 * w2 + x1 * y2 - y1 * x2
-    return w, x, y, z
-
-def q_conjugate(q):
-    w, x, y, z = q
-    return (w, -x, -y, -z)
-
-def qv_mult(q1, v1):
-    q2 = (0.0,) + v1
-    return q_mult(q_mult(q1, q2), q_conjugate(q1))[1:]
-
-def axisangle_to_q(v, theta):
-    v = normalize(v)
-    x, y, z = v
-    theta /= 2
-    w = cos(theta)
-    x = x * sin(theta)
-    y = y * sin(theta)
-    z = z * sin(theta)
-    return w, x, y, z
-
-def q_to_axisangle(q):
-    w, v = q[0], q[1:]
-    theta = acos(w) * 2.0
-    return normalize(v), theta
-
-def toEulerAngle(q):
-    w = q.scalar
-    x = q.vector[0]
-    y = q.vector[1]
-    z = q.vector[2]
-
-    #roll (x axis rotation)
-    sinr_cosp = 2.0*((w*x)+(y*z))
-    cosr_cosp = 1.0-(2.0*((x*x)+(y*y)))
-    roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-    #pitch y axis rotation
-    sinp = +2.0 * ((w * y) - (z * x))
-    if (math.fabs(sinp) >= 1):
-        pitch = math.copysign(math.pi / 2, sinp) # use 90 degrees if out of range
-    else:
-        pitch = np.arcsin(sinp)
-
-    siny_cosp = +2.0 * ((w*z) + (x*y))
-    cosy_cosp = +1.0 - 2.0 * ((y*y) + (z*z))
-    yaw = np.arctan2(siny_cosp, cosy_cosp)
-
-
-    return np.matrix([roll, pitch, yaw])
-
-def getTorques(Qw2c, Qw2b, wdes, wcur):
-    #define gains
-    kq = np.matrix([90., 90., 90.]).T #quaternion error gain
-    kw = np.matrix([10, 10, 10]).T #omega error gain
-
-    T_r = -36.07956616966136; # torque coefficient for roll
-    T_p = -12.14599781908070; # torque coefficient for pitch
-    T_y =   8.91962804287785; # torque coefficient for yaw
-    #define local quaternions
-    Qdes = Quaternion(Qw2b.normalised)
-    Qcur = Quaternion(Qw2c.normalised)
-
-    #get error Quaternion
-    Qerr = Qcur.normalised * Qdes.normalised.conjugate.normalised
-    # print('Qerr:', Qerr)
-
-    #check for q0 < 0 and if this is true use Q* (conjugate) to give closest rotation
-    if(Qerr.scalar < 0):     #use the conjugate of Qerr
-        Qerr = Qerr.unit.conjugate.unit
-
-    #renormalize quaternion
-    Qerr = Qerr.unit
-
-    #trying different method to find error
-    theta = np.arccos(Qerr[0]) * 2
-    w = Qerr[0]
-    q1err = w + Qerr[1]*math.sin(theta/2)
-    q2err = w + Qerr[2]*math.sin(theta/2)
-    q3err = w + Qerr[2]*math.sin(theta/2)
-
-    qerrnew = np.array([q1err, q2err, q3err])
-    #get omega errors
-    werr = np.matrix(np.subtract(wdes, wcur))
-
-    #get torques
-    q = np.matrix([Qerr.vector])
-    # q = np.matrix(qerrnew)
-    torques = -1*(kq * q) - (kw * werr)
-    # print('theta', theta, 'torques', torques, 'qerr', Qerr.unit, 'qw2c', Qw2c.unit, 'qc2b', Qw2b.unit)
-    # print(q)
-    return torques
-
-def getTorquesPID(Qcur, Qdes, t0, t1, err0, integration0):
-    kp = -12
-    ki = 0.00001
-    kd = -9
-
-    Qerr = Qcur.normalised * Qdes.normalised.conjugate.normalised
-    #check for q0 < 0 and if this is true use Q* (conjugate) to give closest rotation
-    if(Qerr.scalar < -1*math.pi):     #use the conjugate of Qerr
-        Qerr = Qerr.unit.conjugate.unit
-
-    err = np.matrix([Qerr.vector])
-    integration_err = integration0 + (1/2) * (err - err0) * (t1-t0)
-    derivative_err = (err-err0) / (t1-t0)
-
-    torques = (kp*err) + (ki*integration_err) + (kd*derivative_err)
-    return torques, err, integration_err
-
-def getAccelerationVector_trajectory_gains(Pdesired, Pcurrent, Vdesired, Vcurrent):
-    #gravity vector
-    gravity = np.array([0,0,-650])
-
-    #error vectors
-    Perr = Pdesired - Pcurrent
-    Verr = Vdesired - Vcurrent
-
-    # print('perr:', Perr, 'Verr:', Verr)
-    #Gain Scheduling formula
-    if(Perr.item(2) > 0):
-        kpx = 2
-        kpy = 2
-        kpz = Perr.item(2)/10
-    else:
-        kpx = 5
-        kpy = 5
-        kpz = 2
-    if(Verr.item(2) > 0):
-        kvz = Verr.item(2)/5
-    else:
-        kvz = 2
-
-    #gains for state feedback control
-    kp = np.array([kpx, kpy, kpz])
-    kv = np.array([2, 2, kvz])
-
-    #input vector calculation
-    acc = -1*np.multiply(kp, Perr) - (np.multiply(kv, Verr))
-    acc_gravityfix = acc + gravity
-    accMagnitude = np.linalg.norm(acc_gravityfix)
-
-    return acc_gravityfix, accMagnitude
-
-def getAccelerationVector_TPN_gains(Pdesired, Pcurrent, Vdesired, Vcurrent):
-    #gravity vector
-    gravity = np.array([0,0,-650])
-
-    #error vectors
-    Perr = Pdesired - Pcurrent
-    Verr = Vdesired - Vcurrent
-
-    #gains for state feedback control
-    kp = np.array([3,3,3])
-    kv = np.array([2,2,2])
-
-    #input vector calculation
-    acc = np.multiply(kp, Perr) + (np.multiply(kv, Verr))
-    acc_gravityfix = acc - gravity
-    accMagnitude = np.linalg.norm(acc_gravityfix)
-
-    return acc_gravityfix, accMagnitude

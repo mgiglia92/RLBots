@@ -1,3 +1,5 @@
+# This is the file that the bot will use to run the optimization in real time
+
 import numpy as np
 from scipy.optimize import minimize, Bounds
 from scipy import integrate as int
@@ -11,26 +13,26 @@ import threading
 import traceback
 import copy
 import controller as con
+import queue
+import time
 
 class Optimizer():
     def __init__(self):
+        # Queue for data thread safe
+        self.data = queue.LifoQueue()
+        self.control_data = queue.LifoQueue()
 
         # Create thread lock
-        self.lock = threading.Lock()
+        # self.lock = threading.Lock()
+
+        # stop thread variable
+        self.stop = False
+
+        # variable to prevent multiple solutions form running
+        self.solving = False
 
         # Create thread parameters
         self.MPC_thread = threading.Thread(target=self.run, args=(), daemon=True)
-
-        # Thread stop variables
-        self.stop = False
-        self.trigger = False
-        self.ready = False
-        self.go = False
-
-        # Current Game state data
-        self.currentTime = None
-        self.currentBall = None
-        self.currentCar = None
 
         # Controller state to pass into get_output function
         self.controllerState = con.Controller()
@@ -39,12 +41,15 @@ class Optimizer():
         self.u_pitch_star = 0.0
         self.u_star = 0.0
 
+
+        # time.sleep(1)
+        # self.MPC_queue.put('worked')
+
         # Initialize optimization parameters
         self.initialize_optimization()
 
 
     def initialize_optimization(self):
-
 ################# AIRBORNE OPTIMIZER SETTINGS################
         self.m = GEKKO(remote=False) # Airborne optimzer
 
@@ -107,15 +112,15 @@ class Optimizer():
 #################GROUND DRIVING OPTIMIZER SETTTINGS##############
         self.d = GEKKO(remote=False) # Driving on ground optimizer
 
-        ntd = 11
+        ntd = 7
         self.d.time = np.linspace(0, 1, ntd) # Time vector normalized 0-1
 
         # options
-        # self.d.options.NODES = 3
-        self.d.options.SOLVER = 3
-        self.d.options.IMODE = 6# MPC mode
-        # m.options.IMODE = 9 #dynamic ode sequential
-        self.d.options.MAX_ITER = 200
+        # self.d.options.NODES = 2
+        self.d.options.SOLVER = 1
+        self.d.options.IMODE = 5# MPC mode
+        # self.d.options.IMODE = 9 #dynamic ode sequential
+        self.d.options.MAX_ITER = 500
         self.d.options.MV_TYPE = 0
         self.d.options.DIAGLEVEL = 0
 
@@ -129,17 +134,17 @@ class Optimizer():
 
 
         # Boost variable, its integer type since it can only be on or off
-        self.u_thrust_d = self.d.MV(value=0,lb=0,ub=1, integer=True) #Manipulated variable integer type
-        self.u_thrust_d.STATUS = 0
-        self.u_thrust_d.DCOST = 1e-5
+        self.u_thrust_d = self.d.MV(value = 1, integer = True, lb=0,ub=1) #Manipulated variable integer type
+        self.u_thrust_d.STATUS = 1
+        # self.u_thrust_d.DCOST = 1e-5
 
         # Throttle value, this can vary smoothly between 0-1
-        self.u_throttle_d = self.d.MV(value = 1, lb = 0.02, ub = 1)
+        self.u_throttle_d = self.d.MV(value = 1, lb = 0.1, ub = 1)
         self.u_throttle_d.STATUS = 1
         self.u_throttle_d.DCOST = 1e-5
 
         # Turning input value also smooth
-        self.u_turning_d = self.d.MV(value = 0, lb = -1, ub = 1)
+        self.u_turning_d = self.d.MV(lb = -1, ub = 1)
         self.u_turning_d.STATUS = 1
         self.u_turning_d.DCOST = 1e-5
 
@@ -150,9 +155,16 @@ class Optimizer():
 
     def optimizeDriving(self, car, car_desired):
 
+        # Print what values we're using
+        print('Values for this optimization---------------------------------')
+        print('car', car.position, 'car desired', car_desired.position)
         # Desired positions
         self.x_desired = self.d.Var(value = car_desired.x)
         self.y_desired = self.d.Var(value = car_desired.y)
+
+        # Desired velocities
+        self.vx_desired = self.d.Var(value = car_desired.vx)
+        self.vy_desired = self.d.Var(value = car_desired.vy)
 
         # Positions of driving plane
         self.sx_d = self.d.Var(value = car.x)
@@ -160,13 +172,13 @@ class Optimizer():
         self.yaw = self.d.Var(value = car.yaw)
 
         # Velocities of driving plane
-        self.vx_d = self.d.Var(value = car.vx)
-        self.vy_d = self.d.Var(value = car.vy)
-        self.v_mag = self.d.Intermediate(self.d.sqrt((self.vx_d**2) + (self.vy_d**2)))
+        self.v_mag = self.d.Var(value = self.d.sqrt((car.vx**2) + (car.vy**2)), lb = 0.0, ub = 2300.0)
+        self.vx_d = self.d.Intermediate(self.d.cos(self.yaw) * self.v_mag)
+        self.vy_d = self.d.Intermediate(self.d.sin(self.yaw) * self.v_mag)
 
         # Curvature of turn dependant on velocity magnitude
-        self.curvature = self.d.Intermediate(0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*self.v_mag**2) - ((1.48e-12) * self.v_mag**3) + ((2.37e-16) * self.v_mag**4))
-
+        self.curvature = self.d.Intermediate(0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*(self.v_mag**2)) - ((1.48e-12) * (self.v_mag**3)) + ((2.37e-16) * (self.v_mag**4)))
+        self.turn_radius = self.d.Intermediate(153 - (0.0713*self.v_mag) + (4.83e-4 * (self.v_mag**2)) - (1.16e-7 * (self.v_mag**3)))
 
         # Heading unit vector from yaw
         self.heading_x = self.d.Intermediate(self.d.cos(self.yaw))
@@ -178,24 +190,36 @@ class Optimizer():
         self.v_relative = self.d.Intermediate((self.heading_x*self.vx_direction) + (self.heading_y*self.vy_direction))
         self.throttle_relative = self.d.Intermediate(self.v_relative * self.u_throttle_d)
 
-        self.acceleration = self.d.Intermediate(self.u_throttle_d * (-1600.0/1410.0) * self.v_mag)
+        self.throttle_acceleration = self.d.Intermediate((self.u_throttle_d * ((-1600 * self.v_mag/1410) + 1600)) >= 0.0)
+        self.thrust_acceleration = self.d.Intermediate(self.u_thrust_d * 991.667)
 
         # Differental equations
         self.d.Equation(self.sx_d.dt()==self.tf_d * self.vx_d)
         self.d.Equation(self.sy_d.dt()==self.tf_d *self.vy_d)
-        self.d.Equation(self.vx_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.cos(self.yaw)))
-        self.d.Equation(self.vy_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.sin(self.yaw)))
+        self.d.Equation(self.v_mag.dt()==self.tf_d * (self.throttle_acceleration + self.thrust_acceleration))
+        # self.d.Equation(self.v_mag.dt()==self.tf_d * (self.u_thrust_d * 1060.0))
+        # self.d.Equation(self.vx_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.cos(self.yaw)))
+        # self.d.Equation(self.vy_d.dt()==self.tf_d *(self.u_throttle_d * ((-1600 * self.v_mag/1410) +1600) * self.d.sin(self.yaw)))
         self.d.Equation(self.yaw.dt()==self.tf_d *(self.u_turning_d * (self.curvature) * self.v_mag))
 
-        self.d.Equation(self.x_desired.dt() == 0)
-        self.d.Equation(self.y_desired.dt() == 0)
+        self.d.Equation(self.x_desired.dt() == 0.0)
+        self.d.Equation(self.y_desired.dt() == 0.0)
 
-        self.d.Obj(self.final_d * 1e4 * (self.sx_d - self.x_desired)**2)
-        self.d.Obj(self.final_d * 1e4 * (self.sy_d - self.y_desired)**2)
-        self.d.Obj(self.tf_d * 1e3)
+        # Objective functions
+        self.d.Obj(self.final_d * 1e6 * (self.sx_d - self.x_desired)**2)
+        self.d.Obj(self.final_d * 1e6 * (self.sy_d - self.y_desired)**2)
+        # self.d.Obj( 1e8 * ((self.final_d * self.sx_d) - car_desired.x)**2)
+        # self.d.Obj( 1e8 * ((self.final_d * self.sy_d) - car_desired.y)**2)
+        # self.d.Obj(self.final_d * 1e4 * (self.vx_d - self.vx_desired)**2)
+        # self.d.Obj(self.final_d * 1e4 * (self.vy_d - self.vy_desired)**2)
+        self.d.Obj(self.tf_d * 1e8)
 
         self.d.solve()
         self.ts_d = np.multiply(self.d.time, self.tf_d.value[0])
+
+        # solving complete reset flag
+        self.solving = False
+
         return self.ts_d
 
     def optimize2D(self, si, sf, vi, vf, ri, omegai, ball_si, ball_vi): #these are 1x2 vectors s or v [x, z]
@@ -391,38 +415,23 @@ class Optimizer():
 
 
     def run(self):
-
         while(self.stop == False):
-            # time.sleep(0.1)
             try:
-                print('thread here, hi')
-                if(self.currentCar != None and self.currentBall != None):
-                    while(1):
-                        try:
-                            self.ready = True # Flag variable to tell the get_output function to not write to data right now
+                print('in run function')
+                [car, car_desired] = self.data.get()
+                self.data.queue.clear()
+                print('car actual', car.position, 'car desired', car_desired.position)
 
-                            if(self.go == True):
-                                ball = copy.deepcopy(self.currentBall)
-                                car = copy.deepcopy(self.currentCar)
-                                print('ball pos', ball.position, 'car pos', car.position)
-                                # Unlock variable to allow writing
-                                # self.lock.release()
+                if(car != None and self.solving == False):
+                    self.solving = True
+                    self.optimizeDriving(copy.deepcopy(car), copy.deepcopy(car_desired))
+                    # print('t', self.ts_d, 'u_turn', self.u_turning_d.value)
 
-                                # Run optimization function
-                                if(self.trigger == True):
-                                    u, u_pitch = self.MPC_optimize(car, ball)
-                                    self.controllerState.boostPercent = u.value[0]
-                                    self.controllerState.torques = np.array([0,u_pitch.value[0], 0])
-
-                                self.ready = False # let get outpu tknow you're done
-                                break
-                            else:
-                                break
-                        except Exception as e:
-                            print('Exception when locking to read from current data: ', e)
-
+                    #Push data to control data queue
+                    self.control_data.put([self.ts_d, self.u_throttle_d, self.u_turning_d, self.u_thrust_d])
 
                     # Save local control vector and time that the control vector should start
             except Exception as e:
                 print('Exception in optimization thread', e)
                 traceback.print_exc()
+                pass
