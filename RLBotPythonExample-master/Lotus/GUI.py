@@ -2,9 +2,26 @@ from tkinter import Tk, Label, Button, StringVar, Entry, Listbox, Text, Scrollba
 from OptimizationDriving import Optimizer
 import numpy as np
 import math
+from EnvironmentManipulator import EnvironmentManipulator
+from Enumerations import CarStateEnumeration, BallStateEnumeration
+
+# RLBOT classes and services
+from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
+from rlbot.utils.structures.game_data_struct import GameTickPacket
+from rlbot.utils.game_state_util import GameState
+from rlbot.utils.game_state_util import CarState
+from rlbot.utils.game_state_util import Physics
+from rlbot.utils.game_state_util import Vector3
+from rlbot.utils.game_state_util import Rotator
+from rlbot.utils.game_state_util import BallState
+
 
 class GUI:
-    def __init__(self, master):
+    def __init__(self, master, EM):
+#Initialize EnvironmentManipulator
+        self.EM = EM
+        self.EM.setValue(1.0)
+
 #Import Optimizer Alogorithm Class
         self.opt = Optimizer()
 #GUI INIT
@@ -175,18 +192,52 @@ class GUI:
             s_ti, s_tf, v_ti, v_tf, r_ti, omega_ti = self.compartmentalizeData()
 
             self.opt.__init__() #Reset initial conditions and all variables to allow a clean simulation
-            acceleration, turning, t_star = self.opt.optimize2D(s_ti, s_tf, v_ti, v_tf, r_ti, omega_ti) #Run the driving optimization algorithm
+            acceleration, yaw, t_star = self.opt.optimize2D(s_ti, s_tf, v_ti, v_tf, r_ti, omega_ti) #Run the driving optimization algorithm
 
-            print("t_star", t_star, "acceleration", acceleration.value, "turning", turning.value)
+            print("t_star", t_star, "acceleration", acceleration.value, "yaw", yaw.value)
             string = "\n--------------------------------------------------" + \
-                str("\nt_star: ") + str(t_star)+"\nacceleration: "+ str(acceleration.value)+ "\nturning: "+ str(turning.value)
+                str("\nt_star: ") + str(t_star)+"\nacceleration: "+ str(acceleration.value)+ "\nyaw: "+ str(yaw.value) + "\nturning: " + str(self.opt.u_turning_d.value)
             self.text_trajectory_data.insert('1.end', string)
 
-            return t_star, acceleration, turning
+
+            return t_star, acceleration, self.opt.u_turning_d.value
+
         except Exception as e:
             print(e)
             print('An entry is invalid')
 
 
-    def runTrajectory():
-        print("run trajectory not made yet")
+    def runTrajectory(self):
+        #Set EnvironmentManipulator initial car and ball states
+        b = BallStateEnumeration().ballStateHigh
+        c = self.createCarStateFromGUI()
+        self.EM.setInitialStates(c, b)
+        self.EM.startTrajectory()
+
+    def getTrajectoryData(self):
+        # Trajectory Data Types
+        ts = self.opt.ts
+        sx = self.opt.sx
+        sy = self.opt.sy
+        vx = self.opt.vx
+        vy = self.opt.vy
+        yaw = self.opt.yaw
+        omega = self.opt.omega
+
+        return ts, sx, sy, vx, vy, yaw, omega
+
+    def getInputData(self):
+        return self.opt.a, self.opt.u_turning_d
+
+    def createCarStateFromGUI(self):
+        x = float(self.entry_initial_x.get())
+        y = float(self.entry_initial_y.get())
+        vx = float(self.entry_initial_vx.get())
+        vy = float(self.entry_initial_vy.get())
+        r = float(self.entry_initial_yaw.get())
+        omega = float(self.entry_initial_omega.get())
+
+        carState = CarState(boost_amount=100,
+                         physics=Physics(location = Vector3(x, y, 17.01),velocity=Vector3(vx, vy, 0), rotation = Rotator(pitch = 0, yaw = r, roll = 0), angular_velocity = Vector3(0,0,omega)))
+
+        return carState

@@ -53,9 +53,9 @@ class Optimizer():
         # self.u_throttle_d.DCOST = 1e-5
 
         # Turning input value also smooth
-        # self.u_turning_d = self.d.MV(lb = -1, ub = 1)
-        # self.u_turning_d.STATUS = 1
-        # self.u_turning_d.DCOST = 1e-5
+        self.u_turning_d = self.d.MV(value = 1, lb = 0, ub = 2) # 0-2 since using -1 to +1 was causing issues. I shift the value in the differential equations. Worked well
+        self.u_turning_d.STATUS = 1
+        self.u_turning_d.DCOST = 1e-10
 
         # end time variables to multiply u2 by to get total value of integral
         self.p_d = np.zeros(ntd)
@@ -81,15 +81,16 @@ class Optimizer():
 
         # variables intial conditions are placed here
             # Position and Velocity in 2d
-        self.sx = self.d.Var(value=si[0], lb=-2500, ub=2500) #x position
+        self.sx = self.d.Var(value=si[0], lb=-4096, ub=4096) #x position
         # self.vx = self.d.Var(value=vi[0]) #x velocity
-        self.sy = self.d.Var(value=si[1], lb=-2500, ub=2500) #y position
+        self.sy = self.d.Var(value=si[1], lb=-5120, ub=5120) #y position
         # self.vy = self.d.Var(value=vi[1]) #y velocity
             # Pitch rotation and angular velocity
         self.yaw = self.d.Var(value = ri) #orientation yaw angle
+        self.omega = self.d.Var(value = omegai)
         # self.omega_yaw = self.d.Var(value=omegai, lb=-5.5, ub=5.5) #angular velocity
         # self.v_mag = self.d.Intermediate(self.d.sqrt((self.vx**2) + (self.vy**2)))
-        self.v_mag = self.d.Var(value = self.d.sqrt((vi[0]**2) + (vi[1]**2)), ub = 2500)
+        self.v_mag = self.d.Var(value = self.d.sqrt((vi[0]**2) + (vi[1]**2)),  ub = 2500)
 
         self.curvature = self.d.Intermediate((0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*self.v_mag**2) - ((1.48e-12) * self.v_mag**3) + ((2.37e-16) * self.v_mag**4)))
 
@@ -104,13 +105,7 @@ class Optimizer():
         self.d.Equation(self.v_mag.dt() == self.tf * self.a * (991.666+60))
         self.d.Equation(self.sx.dt() == self.tf * ((self.v_mag * self.d.cos(self.yaw))))
         self.d.Equation(self.sy.dt() == self.tf * ((self.v_mag * self.d.sin(self.yaw))))
-        # self.d.Equation(self.vx.dt() == self.tf * (self.a * (991.666+60) * self.d.cos(self.yaw)))
-        # self.d.Equation(self.vy.dt() == self.tf * (self.a * (991.666+60) * self.d.sin(self.yaw)))
-        # self.d.Equation(self.vx.dt()==self.tf *(self.a * ((-1600 * self.v_mag/1410) +1600) * self.d.cos(self.yaw)))
-        # self.d.Equation(self.vy.dt()==self.tf *(self.a * ((-1600 * self.v_mag/1410) +1600) * self.d.sin(self.yaw)))
-        # self.d.Equation(self.vx == self.tf * (self.v_mag * self.d.cos(self.yaw)))
-        # self.d.Equation(self.vy == self.tf * (self.v_mag * self.d.sin(self.yaw)))
-        self.d.Equation(self.yaw.dt() <= self.tf * (self.curvature * self.v_mag))
+        self.d.Equation(self.yaw.dt() == self.tf * ((self.u_turning_d - 1.0) * self.curvature * self.v_mag))
 
 
 
@@ -156,7 +151,11 @@ class Optimizer():
 
         return self.a, self.yaw, self.ts
 
+    def getTrajectoryData(self):
+        return [self.ts, self.sx, self.sy, self.vx, self.vy, self.yaw, self.omega]
 
+    def getInputData(self):
+        return [self.ts, self.a]
 #
 # # Main Code
 #

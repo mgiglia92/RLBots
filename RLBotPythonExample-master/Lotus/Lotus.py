@@ -11,16 +11,16 @@ import math
 import Plotting
 import Predictions
 from CoordinateSystems import CoordinateSystems
-from BallController import BallController
+# from BallController import BallController
 from pyquaternion import Quaternion
-from TrueProportionalNavigation import TPN
-import controller as con
-import State as s
-import DrivingEquations
-import DiscreteDynamicModel as ddm
+# from TrueProportionalNavigation import TPN
+from Controller import Controller
+# import State as s
+# import DrivingEquations
+# import DiscreteDynamicModel as ddm
 import Optimization2
 from Trajectory import Trajectory
-from Car import Car
+# from Car import Car
 from GUI import GUI
 from tkinter import Tk, Label, Button, StringVar, Entry, Listbox
 
@@ -41,8 +41,6 @@ from rlbot.utils.game_state_util import BallState
 
 from enum import Enum
 import random
-import control #Control system python library
-import numpy as np
 #import slycot
 
 #imports for LQR functions
@@ -56,119 +54,116 @@ import copy
 import queue
 
 import queue_testing
+from EnvironmentManipulator import EnvironmentManipulator
+
 
 class Lotus(BaseAgent):
 
     def initialize_agent(self):
         #Initialize GUI
+        self.EM = EnvironmentManipulator()
         self.root = Tk()
-        self.g = GUI(self.root)
-        # g.master.mainloop() #GUI MAIN LOOP start
+        self.g = GUI(self.root, self.EM)
 
-        self.csv_write_flag = 0
+        # Controller clsas with Algorithm to follow trajectory
+        self.controller = Controller()
+
+        # self.csv_write_flag = 0
         #This runs once before the bot starts up
         self.packet = None
         self.controller_state = SimpleControllerState()
-        self.resetFlag = 0;
-        self.setCarState()
-        self.car = Car()
-        self.boostCounter = BoostCounter()
-        self.boostCounter2 = BoostCounter2()
-        self.boostCounter3 = BoostCounter3()
-        self.ball = Ball()
 
-        self.controller = con.Controller()
-        self.trajectory = Trajectory()
+        # # Set ball initial conditions
+        # self.ball_si = [-1200.0, 400.0]
+        # self.ball_vi = [1200.0, 1200.0]
+        #
+        # # Ball and car states that you can call for controlling environement
+        # #Set ball and car states to set game state for testing
+        # # self.ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
+        # # self.ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
+        # self.ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
+        # # self.ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
+        # self.ball_high_pos = Vector3(1000, -1000, 1500)
+        # self.ball_state_high = BallState(Physics(location=self.ball_high_pos, velocity = Vector3(0, 0, 300)))
+        # self.ball_state_none = BallState()
+        # self.ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
+        # self.ball_state_optimizer_test = BallState(physics = Physics(location=Vector3(self.ball_si[0], 0, self.ball_si[1]), velocity = Vector3(self.ball_vi[0], 0, self.ball_vi[1])))
+        # # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
+        # #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
+        # self.car_state = CarState(boost_amount=1,
+        #                  physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 200), rotation = Rotator(pitch = math.pi/8, yaw = math.pi/2, roll = 0), angular_velocity = Vector3(0,0,0)))
+        # self.car_state_hold = CarState(boost_amount=1,
+        #                  physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
+        # self.car_state_falling = CarState(boost_amount=0)
+        # self.car_state_high = CarState( boost_amount=0,
+        #                  physics=Physics(location = Vector3(2200, 00, 1500), velocity = Vector3(0,0,00), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
+        # self.car_state_optimizer_test = CarState(
+        #                  physics=Physics(location = Vector3(self.s_ti[0], 0, self.s_ti[1]), velocity = Vector3(self.v_ti[0],0,self.v_ti[1]), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
+        # # Reference starting car state
+        # self.car_start = Car()
+        # self.car_start.x = -1500.0
+        # self.car_start.y = 2500.0
+        # self.car_start.vx = 0.0
+        # self.car_start.vy = 0.0
+        # self.car_start.yaw = -math.pi/2
+        #
+        # # Desired car state
+        # self.car_desired = Car()
+        #
+        # self.car_desired.x = self.ball_high_pos.x
+        # self.car_desired.y = self.ball_high_pos.y
+        # self.car_desired.position = np.array([self.car_desired.x, self.car_desired.y, 0])
+        # self.car_desired.vx = 1000
+        # self.car_desired.vy = 1000
+        #
+        # self.car_state_optimizer_driving_test = CarState(
+        #          physics=Physics(location = Vector3(self.car_start.x, self.car_start.y, 17), velocity = Vector3(self.car_start.vx,self.car_start.vy,0), rotation = Rotator(pitch = 0, yaw = self.car_start.yaw, roll = 0.0)))
+        #
+        # game_state = GameState(cars = {self.index: self.car_state}, ball = self.ball_state_high)
+        # self.set_game_state(game_state)
+        #
+        # # self.optimizer.solving = False
+        # game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
+        # self.set_game_state(game_state)
+        #
+        # self.flag = True
 
-        # Set optimizer values for optimal control algo for car
-        self.s_ti = [-2200.0, 100.0]
-        self.v_ti = [-50.0, 500.0]
-        self.ss_tf = [-2200.0, 1200.0]
-        self.v_tf = [-500.00, 200.0]
-        self.r_ti = 0.0 # inital orientation of the car
-        self.omega_ti = 0.0 # initial angular velocity of car
-
-        # Set ball initial conditions
-        self.ball_si = [-1200.0, 400.0]
-        self.ball_vi = [1200.0, 1200.0]
-
-        # Ball and car states that you can call for controlling environement
-        #Set ball and car states to set game state for testing
-        # self.ball_state1 = BallState(Physics(location=Vector3(x, y, z), velocity = Vector3(0, 0, vi)))
-        # self.ball_state2 = BallState(Physics(location=Vector3(ballpos[0],ballpos[1],ballpos[2]), velocity = Vector3(ballvel[0],ballvel[1],ballvel[2])))
-        self.ball_stateHold = BallState(Physics(location=Vector3(0, 0, 800), velocity = Vector3(0, 0, 0)))
-        # self.ball_state = BallState(Physics(velocity = Vector3(vx, vy, 1)))
-        self.ball_high_pos = Vector3(1000, -1000, 1500)
-        self.ball_state_high = BallState(Physics(location=self.ball_high_pos, velocity = Vector3(0, 0, 300)))
-        self.ball_state_none = BallState()
-        self.ball_state_linear = BallState(Physics(velocity = Vector3(0, -200, 300)))
-        self.ball_state_optimizer_test = BallState(physics = Physics(location=Vector3(self.ball_si[0], 0, self.ball_si[1]), velocity = Vector3(self.ball_vi[0], 0, self.ball_vi[1])))
-        # car_state = CarState(jumped=True, double_jumped=False, boost_amount=0,
-        #                  physics=Physics(location = Vector3(-1000, 0, 500),velocity=Vector3(0, 0, 0), rotation = Rotator(pitch = eulerAngles.item(1), yaw = eulerAngles.item(2), roll = eulerAngles.item(0))))
-        self.car_state = CarState(boost_amount=1,
-                         physics=Physics(location = Vector3(-1000, -3000, 100),velocity=Vector3(0, -300, 200), rotation = Rotator(pitch = math.pi/8, yaw = math.pi/2, roll = 0), angular_velocity = Vector3(0,0,0)))
-        self.car_state_hold = CarState(boost_amount=1,
-                         physics=Physics(location = Vector3(00, 00, 500), velocity = Vector3(0,0,0)))
-        self.car_state_falling = CarState(boost_amount=0)
-        self.car_state_high = CarState( boost_amount=0,
-                         physics=Physics(location = Vector3(2200, 00, 1500), velocity = Vector3(0,0,00), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
-        self.car_state_optimizer_test = CarState(
-                         physics=Physics(location = Vector3(self.s_ti[0], 0, self.s_ti[1]), velocity = Vector3(self.v_ti[0],0,self.v_ti[1]), rotation = Rotator(pitch = self.r_ti, yaw = 0.0, roll = 0.0)))
-        # Reference starting car state
-        self.car_start = Car()
-        self.car_start.x = -1500.0
-        self.car_start.y = 2500.0
-        self.car_start.vx = 0.0
-        self.car_start.vy = 0.0
-        self.car_start.yaw = -math.pi/2
-
-        # Desired car state
-        self.car_desired = Car()
-
-        self.car_desired.x = self.ball_high_pos.x
-        self.car_desired.y = self.ball_high_pos.y
-        self.car_desired.position = np.array([self.car_desired.x, self.car_desired.y, 0])
-        self.car_desired.vx = 1000
-        self.car_desired.vy = 1000
-
-        self.car_state_optimizer_driving_test = CarState(
-                 physics=Physics(location = Vector3(self.car_start.x, self.car_start.y, 17), velocity = Vector3(self.car_start.vx,self.car_start.vy,0), rotation = Rotator(pitch = 0, yaw = self.car_start.yaw, roll = 0.0)))
-
-        game_state = GameState(cars = {self.index: self.car_state}, ball = self.ball_state_high)
-        self.set_game_state(game_state)
-
-        # self.optimizer.solving = False
-        game_state = GameState(cars = {self.index: self.car_state_optimizer_driving_test}, ball = self.ball_state_high)
-        self.set_game_state(game_state)
-
-        self.flag = True
-
-        time.sleep(2)
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
 
         #Update GUI and pass important values to GUI
         self.g.label_tnow.config(text=str(round(float(packet.game_info.seconds_elapsed), 2)))
         self.root.update()
-        print(self.g.entry_initial_x.get())
-        # update trajectory data
-        self.trajectory.TG.update_from_packet(packet, self.index)
 
-        self.controller.boostPercent = 0
-        self.controller.steer = 0.5
-        self.controller.throttle = 1
-        self.setControllerState(self.controller)
+        # Check if Trajectory should be started and start trajectory
+        if(self.EM.start_trajectory == True):
 
-        try:
-            if(self.flag):
-                self.trajectory.get_simple_test_trajectory(packet, self.index)
-            self.flag = False
+            print('initializing environment')
+            self.g.label_t0.config(text=str(round(float(packet.game_info.seconds_elapsed), 2))) #Set the t0 label on the GUI to current time
+            self.EM.start_trajectory = False
+            self.controller.on = True #Turn the realtime controller on
 
-        except Exception as e:
-                exc_type, exc_obj, exc_tb = sys.exc_info()
-                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                print(exc_type, fname, exc_tb.tb_lineno)
-                print(e)
+            # Send trajectory and input data to controller
+            ts, sx, sy, vx, vy, yaw, omega = self.g.getTrajectoryData()
+            self.controller.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega)
+            a, turning = self.g.getInputData()
+            self.controller.setInputData(a, turning)
+            self.controller.t0 = packet.game_info.seconds_elapsed
+
+            # Set Environment
+
+            game_state = GameState(cars = {self.index: self.EM.car_initial_state}, ball = self.EM.ball_initial_state)
+            self.set_game_state(game_state)
+
+
+        # Update data to controller
+        self.controller.setTNOW(float(packet.game_info.seconds_elapsed))
+        self.controller_state = self.controller.openLoop()
+
+        print(self.controller_state.steer)
+        # print(self.controller.t_now)
+
+        # print("ENvironmentmanipulator value: ", self.EM.getValue())
 
         return self.controller_state
 
