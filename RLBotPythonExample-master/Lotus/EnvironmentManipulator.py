@@ -30,3 +30,7 @@ class EnvironmentManipulator:
 
     def startTrajectory(self):
         self.start_trajectory = True
+
+    def setEnvironment(self, baseagent):
+        game_state = GameState(cars = {baseagent.index: self.car_initial_state}, ball = self.ball_initial_state)
+        baseagent.set_game_state(game_state)

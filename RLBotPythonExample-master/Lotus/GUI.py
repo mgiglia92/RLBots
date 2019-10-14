@@ -4,6 +4,10 @@ import numpy as np
 import math
 from EnvironmentManipulator import EnvironmentManipulator
 from Enumerations import CarStateEnumeration, BallStateEnumeration
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+import sys
 
 # RLBOT classes and services
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
@@ -54,26 +58,26 @@ class GUI:
         self.label_initial_velocity.grid(row=4, column=0, columnspan=2)
         self.label_initial_velocity.justify = "center"
 
-        self.label_vx = Label(master, text="X:")
-        self.label_vx.grid(row=5, column=0)
+        self.label_vmag = Label(master, text="V_Magnitude:")
+        self.label_vmag.grid(row=5, column=0)
 
-        self.label_vy = Label(master, text="Y:")
-        self.label_vy.grid(row=6, column=0)
+        # self.label_vy = Label(master, text="Y:")
+        # self.label_vy.grid(row=6, column=0)
 
-        self.entry_initial_vx = Entry(master)#, validate = 'key', validatecommand = vcmd)
-        self.entry_initial_vx.grid(row=5, column=1)
-        self.entry_initial_vx.insert(0, "0")
+        self.entry_initial_vmag = Entry(master)#, validate = 'key', validatecommand = vcmd)
+        self.entry_initial_vmag.grid(row=5, column=1)
+        self.entry_initial_vmag.insert(0, "0")
 
-        self.entry_initial_vy = Entry(master)
-        self.entry_initial_vy.grid(row=6, column=1)
-        self.entry_initial_vy.insert(0, "500")
+        # self.entry_initial_vy = Entry(master)
+        # self.entry_initial_vy.grid(row=6, column=1)
+        # self.entry_initial_vy.insert(0, "500")
 
         self.label_initial_yaw = Label(master, text= "Yaw")
         self.label_initial_yaw.grid(row=7, column=0)
 
         self.entry_initial_yaw = Entry(master)
         self.entry_initial_yaw.grid(row=7, column=1)
-        self.entry_initial_yaw.insert(0, str(-1*math.pi/2))
+        self.entry_initial_yaw.insert(0, str(np.pi/2))
 
         self.label_initial_omega = Label(master, text="Omega(yaw rate)")
         self.label_initial_omega.grid(row=8, column=0)
@@ -143,6 +147,10 @@ class GUI:
         self.button_run = Button(master, text="RUN TRAJECTORY", command=lambda:self.runTrajectory())
         self.button_run.grid(row=10, column=10)
 
+#PRINT TRAJECTORY BUTTON
+        self.button_plot = Button(master, text="PLOT TRAJECTORY DATA", command=lambda:self.plotTrajectory())
+        self.button_plot.grid(row=10, column=11)
+
 #REAL TIME OF TRAJECTORY
         self.label_t0_name = Label(master, text="t0")
         self.label_t0_name.grid(row=9, column=3, columnspan=2)
@@ -151,10 +159,10 @@ class GUI:
         self.label_t0.grid(row=10, column=3)
 
         self.label_tnow_name = Label(master, text=":::::t_now:::::")
-        self.label_tnow_name.grid(row=9, column=4, columnspan=2)
+        self.label_tnow_name.grid(row=9, column=5, columnspan=4)
 
         self.label_tnow = Label(master, text="0.0")
-        self.label_tnow.grid(row=10, column=4, columnspan=2)
+        self.label_tnow.grid(row=10, column=5, columnspan=4)
         self.label_tnow.justify = "center"
 
 #DISPLAY OPTIMATL TRAJECTORY DATA
@@ -176,9 +184,9 @@ class GUI:
         try:
             s_ti = [float(self.entry_initial_x.get()), float(self.entry_initial_y.get())]
             s_tf = [float(self.entry_final_x.get()), float(self.entry_final_y.get())]
-            v_ti = [float(self.entry_initial_vx.get()), float(self.entry_initial_vy.get())]
+            v_ti = float(self.entry_initial_vmag.get())
             v_tf = [float(self.entry_final_vx.get()), float(self.entry_final_vy.get())]
-            r_ti = [float(self.entry_initial_yaw.get())]
+            r_ti = float(self.entry_initial_yaw.get())
             omega_ti = [float(self.entry_initial_omega.get())]
 
             return s_ti, s_tf, v_ti, v_tf, r_ti, omega_ti
@@ -206,6 +214,47 @@ class GUI:
             print(e)
             print('An entry is invalid')
 
+    def plotTrajectory(self):
+        try:
+            print("printing trajectory?")
+            ts = self.opt.d.time * self.opt.tf.value[0]
+
+            # plot results
+            self.fig = plt.figure(2)
+            self.ax = self.fig.add_subplot(111, projection='3d')
+            # plt.subplot(2, 1, 1)
+            Axes3D.plot(self.ax, self.opt.sx.value, self.opt.sy.value, ts, c='r', marker ='o')
+            plt.ylabel('Position/Velocity y')
+            plt.xlabel('Position/Velocity x')
+            self.ax.set_zlabel('time')
+
+            # fig = plt.figure(3)
+            # self.ax = fig.add_subplot(111, projection='3d')
+            # plt.subplot(2, 1, 1)
+            Axes3D.plot(self.ax, self.opt.vx.value, self.opt.vy.value, ts, c='b', marker ='.')
+
+
+
+            plt.figure(1)
+            plt.clf()
+            plt.subplot(3,1,1)
+            plt.plot(ts, self.opt.a, 'r-')
+            plt.ylabel('acceleration')
+
+            plt.subplot(3,1,2)
+            plt.plot(ts, np.multiply(self.opt.yaw, 180/math.pi), 'r-')
+            plt.ylabel('turning input')
+
+            plt.subplot(3, 1, 3)
+            plt.plot(ts, self.opt.v_mag, 'b-')
+            plt.ylabel('vmag')
+
+            plt.ion()
+            plt.show()
+            plt.pause(0.001)
+
+        except Exception as e:
+            print(e)
 
     def runTrajectory(self):
         #Set EnvironmentManipulator initial car and ball states
@@ -216,15 +265,18 @@ class GUI:
 
     def getTrajectoryData(self):
         # Trajectory Data Types
-        ts = self.opt.ts
+        ts = self.opt.d.time * self.opt.tf.value[0] # Get the time vector
+        print("ts: ", ts)
+        print(type(ts))
         sx = self.opt.sx
         sy = self.opt.sy
         vx = self.opt.vx
         vy = self.opt.vy
         yaw = self.opt.yaw
         omega = self.opt.omega
+        curvature = self.opt.curvature
 
-        return ts, sx, sy, vx, vy, yaw, omega
+        return ts, sx, sy, vx, vy, yaw, omega, curvature
 
     def getInputData(self):
         return self.opt.a, self.opt.u_turning_d
@@ -232,10 +284,13 @@ class GUI:
     def createCarStateFromGUI(self):
         x = float(self.entry_initial_x.get())
         y = float(self.entry_initial_y.get())
-        vx = float(self.entry_initial_vx.get())
-        vy = float(self.entry_initial_vy.get())
+        vmag = float(self.entry_initial_vmag.get())
         r = float(self.entry_initial_yaw.get())
         omega = float(self.entry_initial_omega.get())
+
+        # get x y velocities
+        vx = np.cos(r)*vmag
+        vy = np.sin(r)*vmag
 
         carState = CarState(boost_amount=100,
                          physics=Physics(location = Vector3(x, y, 17.01),velocity=Vector3(vx, vy, 0), rotation = Rotator(pitch = 0, yaw = r, roll = 0), angular_velocity = Vector3(0,0,omega)))

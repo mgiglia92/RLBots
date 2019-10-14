@@ -513,7 +513,7 @@ car.vy = 0.0
 car.yaw = 0
 
 car_desired = Car()
-car_desired.x = 1000.0
+car_desired.x = -1000.0
 car_desired.y = -1000.0
 car_desired.vx = 1000
 car_desired.vy = 1000
@@ -526,9 +526,9 @@ ball.vx = 100
 ball.vy = 100
 ball.vz = 100
 
-# opt.optimizeDriving(car, car_desired)
+opt.optimizeDriving(car, car_desired)
 # pi = np.array([100, 100])
-opt.MPC_optimize(car, ball)
+# opt.MPC_optimize(car, ball)
 
 print('u throttle', opt.u_throttle_d.value)
 print('tf_d', opt.tf_d.value)

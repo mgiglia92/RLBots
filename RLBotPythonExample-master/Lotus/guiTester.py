@@ -7,4 +7,4 @@ EM = EnvironmentManipulator()
 root = Tk()
 g = GUI(root, EM)
 g.master.mainloop() #GUI MAIN LOOP start
-print(g.entry_final_x.value)
+print(g.entry_final_x.get())

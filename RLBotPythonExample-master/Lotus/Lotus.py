@@ -140,12 +140,14 @@ class Lotus(BaseAgent):
 
             print('initializing environment')
             self.g.label_t0.config(text=str(round(float(packet.game_info.seconds_elapsed), 2))) #Set the t0 label on the GUI to current time
-            self.EM.start_trajectory = False
+            self.EM.start_trajectory = False # Reset trajectory starting flag to prevent re-initializeation
+            self.EM.setEnvironment(self) # Send self to environment manager to allow it to manuiplate the game state
+
             self.controller.on = True #Turn the realtime controller on
 
             # Send trajectory and input data to controller
-            ts, sx, sy, vx, vy, yaw, omega = self.g.getTrajectoryData()
-            self.controller.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega)
+            ts, sx, sy, vx, vy, yaw, omega, curvature = self.g.getTrajectoryData()
+            self.controller.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega, curvature)
             a, turning = self.g.getInputData()
             self.controller.setInputData(a, turning)
             self.controller.t0 = packet.game_info.seconds_elapsed
@@ -155,12 +157,16 @@ class Lotus(BaseAgent):
             game_state = GameState(cars = {self.index: self.EM.car_initial_state}, ball = self.EM.ball_initial_state)
             self.set_game_state(game_state)
 
-
         # Update data to controller
         self.controller.setTNOW(float(packet.game_info.seconds_elapsed))
-        self.controller_state = self.controller.openLoop()
+        self.controller.setCurrentState(packet.game_cars[self.index])
+        # self.controller_state = self.controller.openLoop() # Get controller value from openLoop algorithm
+        self.controller_state = self.controller.feedBack() # Get controller value from feedback algo
 
-        print(self.controller_state.steer)
+        vx = packet.game_cars[self.index].physics.velocity.x
+        vy= packet.game_cars[self.index].physics.velocity.y
+        vmag = np.sqrt((vx*vx) + (vy*vy))
+        print(vmag)
         # print(self.controller.t_now)
 
         # print("ENvironmentmanipulator value: ", self.EM.getValue())
