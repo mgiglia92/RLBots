@@ -1,4 +1,7 @@
-from tkinter import Tk, Label, Button, StringVar, Entry, Listbox, Text, Scrollbar
+# from tkinter import Tk, Label, Button, StringVar, Entry, Listbox, Text, Scrollbar, Checkbutton, Canvas
+import tkinter as tk
+from tkinter import Tk, Label, Button, StringVar, Entry, Listbox, Text, Scrollbar, Checkbutton, Canvas, PhotoImage, NW
+# from tkinter import *
 from OptimizationDriving import Optimizer
 import numpy as np
 import math
@@ -6,8 +9,8 @@ from EnvironmentManipulator import EnvironmentManipulator
 from Enumerations import CarStateEnumeration, BallStateEnumeration
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-
 import sys
+import linecache
 
 # RLBOT classes and services
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
@@ -21,11 +24,33 @@ from rlbot.utils.game_state_util import BallState
 
 
 class GUI:
-    def __init__(self, master, EM):
+    def PrintException(self):
+        exc_type, exc_obj, tb = sys.exc_info()
+        f = tb.tb_frame
+        lineno = tb.tb_lineno
+        filename = f.f_code.co_filename
+        linecache.checkcache(filename)
+        line = linecache.getline(filename, lineno, f.f_globals)
+        print('EXCEPTION IN ({}, LINE {} "{}"): {}'.format(filename, lineno, line.strip(), exc_obj))
+
+    def __init__(self, master, EM, sim_results):
+        try:
+            # Initialize plotting figures variables etc
+            self.fig = plt.figure(1)
+            self.fig2 = plt.figure(2)
+            self.ax = self.fig.gca(projection='3d')
+            # self.ax = plt.axes(projection='3d') #self.fig.add_subplot(111, projection='3d')
+
+        except BaseException as e:
+            self.PrintException()
+
+
+
 #Initialize EnvironmentManipulator
         self.EM = EM
         self.EM.setValue(1.0)
-
+# SImulation results
+        self.sim_results = sim_results
 #Import Optimizer Alogorithm Class
         self.opt = Optimizer()
 #GUI INIT
@@ -141,16 +166,22 @@ class GUI:
         self.button_generate_trajectory_minimum_time = Button(master, text="Min Time", command=lambda:self.getTrajectory())
         self.button_generate_trajectory_minimum_time.grid(row=10, column=0)
 
+# Save sim data checkbox
+        self.cb_save_simulation = Checkbutton(master, text="Save Sim Data")
+        self.cb_save_simulation.grid(row=9, column=10)
+        self.cb_save_simulation.select() # Make checkbutton checked when gui starts
 
 #RUN TRAJECTORY BUTTON
         #RUN treatment button
         self.button_run = Button(master, text="RUN TRAJECTORY", command=lambda:self.runTrajectory())
         self.button_run.grid(row=10, column=10)
 
-#PRINT TRAJECTORY BUTTON
+#PLOT TRAJECTORY BUTTON
         self.button_plot = Button(master, text="PLOT TRAJECTORY DATA", command=lambda:self.plotTrajectory())
         self.button_plot.grid(row=10, column=11)
-
+#PLOT SIMULATION RESULTS BUTTON
+        self.button_plot_sim_results = Button(master, text="PLOT SIM RESULTS", command=lambda:self.plotSimulationResults())
+        self.button_plot_sim_results.grid(row=9, column = 11)
 #REAL TIME OF TRAJECTORY
         self.label_t0_name = Label(master, text="t0")
         self.label_t0_name.grid(row=9, column=3, columnspan=2)
@@ -178,7 +209,60 @@ class GUI:
         # scrollb.grid(row=11, column=11, sticky='nsew')
         # self.text_trajectory_data['yscrollcommand']=scrollb.set
 
+# WAYPOINT PLACEMENT IMAGE AND MOVEABLE SHAPES
+        self.canvas_waypoint=tk.Canvas(master, width=580, height=700, background='gray')
+        self.canvas_waypoint.grid(row=1,column=15, columnspan = 5, rowspan = 15, sticky='nwe')
+        self.field = PhotoImage(file='D:\Documents\RLBot\RLBotPythonExample-master\Lotus\RL_Field.png')
+        self.canvas_waypoint.create_image(0, 0, image = self.field, anchor=NW)
+# WAYPOINT CIRCLES
+        self.waypoint_size = 25
+        self.waypoint_position_x = [150, 300, 300, 150] # Position of the waypoint shapes in canvas
+        self.waypoint_position_y= [150, 150, 300, 300]
+        self.waypoint_shape = []
+        self.waypoint_text = []
 
+        #Create the 4 way points in their default positions
+        for i in range(len(self.waypoint_position_x)):
+            x = self.canvas_waypoint.create_oval(self.waypoint_position_x[i], self.waypoint_position_y[i], self.waypoint_position_x[i] + self.waypoint_size, self.waypoint_position_y[i] + self.waypoint_size, outline='black', fill='green')
+            self.waypoint_shape.append(x)
+            y = self.canvas_waypoint.create_text(self.waypoint_position_x[i] + 4, self.waypoint_position_y[i] + 4,anchor=NW, font=("Purisa", 10, 'bold'), text="W" + str(i+1), fill='white')
+            self.waypoint_text.append(y)
+        print(self.waypoint_shape)
+
+#Bind left mousebutton click to update position of way point
+        self.canvas_waypoint.bind("<ButtonRelease-1>", self.move_waypoint)
+
+#Bind mouse entering canvas to give it keyboard focus
+        self.canvas_waypoint.bind("<Enter>", lambda event: self.canvas_waypoint.focus_set())
+
+#Bind keyboard buttons 1234 to change the "state" of the editing feature. Number you press changes which waypoint you will change
+        self.canvas_waypoint.bind("0", self.set_editing_state)
+        self.canvas_waypoint.bind("1", self.set_editing_state)
+        self.canvas_waypoint.bind("2", self.set_editing_state)
+        self.canvas_waypoint.bind("3", self.set_editing_state)
+        self.canvas_waypoint.bind("4", self.set_editing_state)
+        self.current_waypoint = 0 # Current waypoint that events will affect
+
+    def move_waypoint(self, event):
+        try:
+
+            bbox = np.array(self.canvas_waypoint.coords(self.waypoint_shape[self.current_waypoint])) #Get bounding box of shape
+            print(bbox)
+            init = self.get_center_of_shape(bbox) #Get center positoin vector of shape from bounding box
+            new = np.array([event.x, event.y]) # Get mouse position
+            final = new - init # Find deltas
+            self.canvas_waypoint.move(self.waypoint_shape[self.current_waypoint], final[0], final[1]) #Move shape by delta
+            self.canvas_waypoint.move(self.waypoint_text[self.current_waypoint], final[0], final[1]) #Move shape by delta
+        except BaseException as e:
+            self.PrintException()
+
+    def set_editing_state(self, event):
+        self.current_waypoint = int(event.char) - 1
+        print(self.current_waypoint)
+
+    def get_center_of_shape(self, bbox): #bbox is bounding box (x1,y1,x2,y2)
+        position = np.array([int((bbox[0]+bbox[2])/2), int((bbox[1]+bbox[3])/2)])
+        return position
 
     def compartmentalizeData(self):
         try:
@@ -214,14 +298,63 @@ class GUI:
             print(e)
             print('An entry is invalid')
 
+    def plotSimulationResults(self):
+        try:
+            if 'self.ax' not in locals(): # create self.ax becuase it throws an error when in the __init__() function, b/c of threads?
+                # self.ax = self.fig.add_subplot(111, projection='3d')
+                self.ax = self.fig.gca(projection='3d')
+
+            ts = self.sim_results.ts
+            ts_a = np.array(self.sim_results.t_now[2:-1]) - self.sim_results.t_now[2]
+
+            # Switch to right figure
+            plt.figure(1)
+            self.ax.clear()
+            # Plot reference trajectory vs time
+            Axes3D.plot(self.ax, self.sim_results.sx, self.sim_results.sy, ts, c='r', marker ='o')
+            plt.ylabel('Position/Velocity y')
+            plt.xlabel('Position/Velocity x')
+            self.ax.set_zlabel('time')
+
+            # Plot actual trajectory vs time
+            Axes3D.plot(self.ax, self.sim_results.sx_a[2:-1], self.sim_results.sy_a[2:-1], ts_a, c='b', marker ='.')
+
+            plt.figure(2)
+            plt.clf()
+            plt.subplot(3,1,1)
+            plt.plot(ts, self.sim_results.vx, 'r-')
+            # plt.ylabel('acceleration')
+
+            plt.subplot(3,1,1)
+            plt.plot(ts_a,  self.sim_results.vx_a[2:-1], 'b-')
+            plt.ylabel('vx error')
+
+            # Get v_mag and v_mag_a
+            v_mag = np.sqrt(np.multiply(self.sim_results.vx, self.sim_results.vx) + np.multiply(self.sim_results.vy, self.sim_results.vy))
+            v_mag_a = np.sqrt(np.multiply(self.sim_results.vx_a, self.sim_results.vx_a) + np.multiply(self.sim_results.vy_a, self.sim_results.vy_a))
+
+            plt.subplot(3, 1, 3)
+            plt.plot(ts, v_mag, 'b-')
+            plt.ylabel('vmag')
+            plt.subplot(3, 1, 3)
+            plt.plot(ts_a, v_mag_a[2:-1], 'g-')
+            plt.ylabel('vmag')
+
+
+            plt.ion()
+            plt.show()
+            plt.pause(0.001)
+        except BaseException as e:
+            self.PrintException()
+
     def plotTrajectory(self):
         try:
             print("printing trajectory?")
             ts = self.opt.d.time * self.opt.tf.value[0]
 
-            # plot results
-            self.fig = plt.figure(2)
-            self.ax = self.fig.add_subplot(111, projection='3d')
+            # Switch to right figure
+            self.fig
+
             # plt.subplot(2, 1, 1)
             Axes3D.plot(self.ax, self.opt.sx.value, self.opt.sy.value, ts, c='r', marker ='o')
             plt.ylabel('Position/Velocity y')
@@ -233,9 +366,7 @@ class GUI:
             # plt.subplot(2, 1, 1)
             Axes3D.plot(self.ax, self.opt.vx.value, self.opt.vy.value, ts, c='b', marker ='.')
 
-
-
-            plt.figure(1)
+            self.fig2
             plt.clf()
             plt.subplot(3,1,1)
             plt.plot(ts, self.opt.a, 'r-')
@@ -254,11 +385,11 @@ class GUI:
             plt.pause(0.001)
 
         except Exception as e:
-            print(e)
+            self.PrintException()
 
     def runTrajectory(self):
         #Set EnvironmentManipulator initial car and ball states
-        b = BallStateEnumeration().ballStateHigh
+        b = self.createBallStateFromGUI() # BallStateEnumeration().ballStateHigh
         c = self.createCarStateFromGUI()
         self.EM.setInitialStates(c, b)
         self.EM.startTrajectory()
@@ -296,3 +427,10 @@ class GUI:
                          physics=Physics(location = Vector3(x, y, 17.01),velocity=Vector3(vx, vy, 0), rotation = Rotator(pitch = 0, yaw = r, roll = 0), angular_velocity = Vector3(0,0,omega)))
 
         return carState
+
+    def createBallStateFromGUI(self):
+        x = float(self.entry_final_x.get())
+        y = float(self.entry_final_y.get())
+        ballState = BallState(Physics(location=Vector3(x, y, 1000), velocity = Vector3(0, 0, 0)))
+
+        return ballState

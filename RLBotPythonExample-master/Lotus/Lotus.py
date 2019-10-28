@@ -55,15 +55,18 @@ import queue
 
 import queue_testing
 from EnvironmentManipulator import EnvironmentManipulator
-
+from SimulationResults import SimulationResults
 
 class Lotus(BaseAgent):
 
     def initialize_agent(self):
-        #Initialize GUI
+        #Initialize GUI and classes sent to GUI object
         self.EM = EnvironmentManipulator()
+        # Simulation results class to send to the gui
+        self.sim_results = SimulationResults()
+
         self.root = Tk()
-        self.g = GUI(self.root, self.EM)
+        self.g = GUI(self.root, self.EM, self.sim_results)
 
         # Controller clsas with Algorithm to follow trajectory
         self.controller = Controller()
@@ -72,6 +75,8 @@ class Lotus(BaseAgent):
         #This runs once before the bot starts up
         self.packet = None
         self.controller_state = SimpleControllerState()
+
+
 
         # # Set ball initial conditions
         # self.ball_si = [-1200.0, 400.0]
@@ -140,14 +145,16 @@ class Lotus(BaseAgent):
 
             print('initializing environment')
             self.g.label_t0.config(text=str(round(float(packet.game_info.seconds_elapsed), 2))) #Set the t0 label on the GUI to current time
-            self.EM.start_trajectory = False # Reset trajectory starting flag to prevent re-initializeation
+            self.EM.start_trajectory = False # Reset trajectory starting flag to prevent re-initialization
             self.EM.setEnvironment(self) # Send self to environment manager to allow it to manuiplate the game state
 
             self.controller.on = True #Turn the realtime controller on
 
             # Send trajectory and input data to controller
             ts, sx, sy, vx, vy, yaw, omega, curvature = self.g.getTrajectoryData()
-            self.controller.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega, curvature)
+            self.controller.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega, curvature) # Give controller trajectory data
+            self.sim_results.clear() # Clear the simulation data since another simulation is starting
+            self.sim_results.setTrajectoryData(ts, sx, sy, vx, vy, yaw, omega, curvature) # Give sim results trajectory data
             a, turning = self.g.getInputData()
             self.controller.setInputData(a, turning)
             self.controller.t0 = packet.game_info.seconds_elapsed
@@ -159,9 +166,14 @@ class Lotus(BaseAgent):
 
         # Update data to controller
         self.controller.setTNOW(float(packet.game_info.seconds_elapsed))
-        self.controller.setCurrentState(packet.game_cars[self.index])
+        self.controller.setCurrentState(packet.game_cars[self.index]) # Sending carstate variable
+
         # self.controller_state = self.controller.openLoop() # Get controller value from openLoop algorithm
         self.controller_state = self.controller.feedBack() # Get controller value from feedback algo
+
+        # Save Trajectory data and real simulation values to plot later
+        if(self.controller.on):
+            self.sim_results.addControlData(float(packet.game_info.seconds_elapsed), packet.game_cars[self.index].physics, self.controller_state)
 
         vx = packet.game_cars[self.index].physics.velocity.x
         vy= packet.game_cars[self.index].physics.velocity.y

@@ -76,18 +76,30 @@ class Controller():
         print('c: ', c)
         return -1*c
 
+    def getNormalizedTurning(self, u, vx, vy):
+        #getting the actual steering value since optmizer uses a polynomial approximation
+        curvature_max = np.array([0.0069, 0.00398, 0.00235, 0.001375, 0.0011, 0.00088])
+        v_for_steer = np.array([0, 500, 1000, 1500, 1750, 2300])
+        velocity = np.linalg.norm(np.array([vx, vy]))
+        curvature_current_max = np.interp(velocity, v_for_steer, curvature_max)
+
+        c = u / curvature_current_max
+
+        return c
+
     def getHeadingError(self, yaw_ref):
         # get unit veclotiy vector
         heading_ref = np.array([np.cos(yaw_ref), np.sin(yaw_ref), 0])
 
         yaw = self.currentState.physics.rotation.yaw
-        heading_current = np.array([np.cos(yaw), np.sin(yaw), 0])
+        heading_cur = np.array([np.cos(yaw), np.sin(yaw), 0])
 
-        heading_error = np.cross(heading_ref, heading_current)
+        heading_ref_mag = np.linalg.norm(heading_ref)
+        heading_cur_mag = np.linalg.norm(heading_cur)
 
-        heading_mag = np.linalg.norm(heading_ref)
-        print("heading ref: ", heading_ref)
-        print("heading mag: ", heading_mag)
+        heading_error = np.arcsin(np.cross(heading_ref, heading_cur) / (heading_ref_mag * heading_cur_mag))
+        # print("heading ref: ", heading_ref)
+        # print("heading mag: ", heading_mag)
         print("heading error: ", heading_error)
         return heading_error[2]
 
@@ -97,7 +109,7 @@ class Controller():
         vy_cur = self.currentState.physics.velocity.y
         v_mag_cur = np.sqrt((vx_cur * vx_cur) + (vy_cur * vy_cur))
         v_error = v_mag_ref - v_mag_cur
-        print("v_error: ", v_error)
+        # print("v_error: ", v_error)
         return v_error
 
     def getLateralError(self, traj_idx):
@@ -132,7 +144,7 @@ class Controller():
 
         # Calculate lateral error sign
         lat_error_sign = np.sign(np.cross(pos_cur, pos_ref)[2]) # Getting lateral error sign
-        print("phi: ", phi)
+        # print("phi: ", phi)
         print("lateral e: ", lat_error)
         return (lat_error * lat_error_sign) + (phi * v_cur_mag) # Lateral error plus lookahead (using v_cur_mag as a variable lookahead value it gets larger as your velocity gets larger this may help)
 
@@ -163,14 +175,22 @@ class Controller():
             if(deltaT > self.ts[-1]):
                 self.on = False
 
-            # Totally Band Bang control attempt
+
             # Feedback gains
             ks = -0.5 # heading error feedback gain
-            ke = -0.001 # lateral error feedback gain
+            ke = -0.01 # lateral error feedback gain
             ka = 1 # Acceleratoin feedback gain
 
+            # Normalize u vector inputs
+            # u_heading_normalized = self.getHeadingError(self.yaw[idx]))
+            # u_lateral_normalized = self.getLaterError(idx)
+
             # Set steering and boost
-            steer = (np.clip((ks * self.getHeadingError(self.yaw[idx])) + (self.getLateralError(idx) * ke), -1, 1))
+            # Here i get a normalized turning parameter in relation to the current maximum possible turning curvature which is velocity dependent, since my u vector should be in the units of curvature I believe.
+            # This is adjusting the u value in relation to the controller output to a changing maximum value (will this cause unwanted behavior?)
+            presteer = self.getNormalizedTurning((ks * self.getHeadingError(self.yaw[idx])) + (ke * self.getLateralError(idx)), self.currentState.physics.velocity.x, self.currentState.physics.velocity.y)
+            steer = np.clip(presteer, -1, 1)
+            # steer = (np.clip((ks * self.getHeadingError(self.yaw[idx])) + (ke * self.getLateralError(idx)), -1, 1))
             boost = np.clip(np.sign(self.getVelocityError(self.vx[idx], self.vy[idx])), 0, 1)
 
             print("steer: ", steer)
@@ -183,6 +203,7 @@ class Controller():
             return self.joypadState
         else:
             return SimpleControllerState()
+
 
     def setTrajectoryData(self, ts, sx, sy, vx, vy, yaw, omega, curvature):
         self.ts = ts

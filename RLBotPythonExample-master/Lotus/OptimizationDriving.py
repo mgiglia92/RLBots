@@ -92,17 +92,17 @@ class Optimizer():
         # self.v_mag = self.d.Intermediate(self.d.sqrt((self.vx**2) + (self.vy**2)))
 
         self.v_mag = self.d.Var(value = vi, ub = 2300, lb =0)
-        self.vx = self.d.Var(value=(self.d.cos(ri) * vi)) #x velocity
-        self.vy = self.d.Var(value=(self.d.sin(ri) * vi)) #y velocity
+        self.vx = self.d.Var(value=(np.cos(ri) * vi)) #x velocity
+        self.vy = self.d.Var(value=(np.sin(ri) * vi)) #y velocity
 
         # curvature as a polynomical approximation
-        # self.curvature = self.d.Intermediate(0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*(self.v_mag**2)) - ((1.48e-12) * (self.v_mag**3)) + ((2.37e-16) * (self.v_mag**4)))
+        self.curvature = self.d.Intermediate(0.0069 - ((7.67e-6) * self.v_mag) + ((4.35e-9)*(self.v_mag**2)) - ((1.48e-12) * (self.v_mag**3)) + ((2.37e-16) * (self.v_mag**4)))
 
         # curvature as a piecewise linear function
-        self.curvature = self.d.Var()
-        self.steer = np.array([0.0069, 0.00398, 0.00235, 0.001375, 0.0011, 0.00088])
-        self.v_for_steer = np.array([0, 500, 1000, 1500, 1750, 2300])
-        self.d.pwl(self.v_mag, self.curvature, self.v_for_steer, self.steer)
+        # self.curvature = self.d.Var()
+        # self.steer = np.array([0.0069, 0.00398, 0.00235, 0.001375, 0.0011, 0.00088])
+        # self.v_for_steer = np.array([0, 500, 1000, 1500, 1750, 2300])
+        # self.d.pwl(self.v_mag, self.curvature, self.v_for_steer, self.steer)
 
         # self.v_for_throttle = np.array([0, 1400, 1410])
         # self.a_for_throttle = np.array([1600, 160, 0])
@@ -129,12 +129,13 @@ class Optimizer():
         self.d.Equation(self.vy == (self.v_mag * self.d.sin(self.yaw)))
 
         # self.d.Equation(self.yaw.dt() == self.tf * ((self.u_turning_d) * self.curvature * self.v_mag))
-        self.d.Equation(self.yaw.dt() == self.tf * self.omega)
+
 
         self.d.Equation(self.sx.dt() == (self.tf * ((self.v_mag * self.d.cos(self.yaw)))))
         self.d.Equation(self.sy.dt() == (self.tf * ((self.v_mag * self.d.sin(self.yaw)))))
 
         self.d.Equation(self.omega == (self.tf * ((self.u_turning_d) * self.curvature * self.v_mag)))
+        self.d.Equation(self.yaw.dt() == self.tf * self.omega)
         # self.d.fix(self.sz, pos = len(self.d.time) - 1, val = 1000)
 
 
